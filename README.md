@@ -38,6 +38,38 @@
 
 HARPY normalizes heterogeneous sensor feeds (ADS-B, satellite TLE, camera feeds, weather radar, seismic) into a spatiotemporal ontology of nodes and edges, then renders that fused picture through a GPU-accelerated tactical HUD.
 
+```mermaid
+graph LR
+    subgraph Inputs["📡 Sensor Feeds"]
+        ADSB["ADS-B<br/>Aircraft"]
+        TLE["TLE<br/>Satellites"]
+        CAM["Cameras"]
+        SEIS["Seismic"]
+        WX["Weather"]
+    end
+    
+    subgraph Fusion["🔧 Fusion Engine"]
+        NORM["Normalization"]
+        ONTO["Ontology Graph<br/>Nodes + Edges"]
+        ALERT["Alert Generation"]
+    end
+    
+    subgraph Output["🎯 Output"]
+        HUD["Tactical HUD<br/>CesiumJS"]
+    end
+    
+    ADSB --> NORM
+    TLE --> NORM
+    CAM --> NORM
+    SEIS --> NORM
+    WX --> NORM
+    
+    NORM --> ONTO
+    ONTO --> ALERT
+    ONTO --> HUD
+    ALERT --> HUD
+```
+
 ### Core Product Differentiators
 
 1. **DVR-native time travel**: Scrub backward/forward across the entire fused picture.
@@ -100,6 +132,47 @@ HARPY/
 ├── ADAPTERS.md                 # Provider limits + TOS (to create)
 ├── AGENTS.md                   # Agent operating context
 └── README.md                   # This specification
+```
+
+```mermaid
+graph
+    subgraph Structure["📁 Project Structure"]
+        APPS["apps/<br/>Frontend"]
+        SERVICES["services/<br/>Backend"]
+        CRATES["crates/<br/>Shared"]
+        PROTO["proto/<br/>Contracts"]
+        DEPLOY["deploy/<br/>K8s/Helm"]
+    end
+    
+    subgraph Apps["🖥️ apps/"]
+        WEB["web/<br/>Next.js + Cesium"]
+    end
+    
+    subgraph Svc["🔧 services/"]
+        RELAY["harpy-relay"]
+        INGEST["harpy-ingest"]
+        FUSION["harpy-fusion"]
+        GRAPH["harpy-graph"]
+        AIP["harpy-aip"]
+        DETECT["harpy-detect"]
+    end
+    
+    subgraph Shared["📦 crates/"]
+        PROTO_CRATE["harpy-proto"]
+        CORE["harpy-core"]
+        HEALTH["harpy-health"]
+    end
+    
+    APPS --> WEB
+    SERVICES --> RELAY
+    SERVICES --> INGEST
+    SERVICES --> FUSION
+    SERVICES --> GRAPH
+    SERVICES --> AIP
+    SERVICES --> DETECT
+    CRATES --> PROTO_CRATE
+    CRATES --> CORE
+    CRATES --> HEALTH
 ```
 
 ## Quick Start
@@ -188,6 +261,23 @@ make dev-down
 [Track] --associated_with--> [Track]
 ```
 
+```mermaid
+graph LR
+    subgraph EvidenceChain["🔗 Evidence Chain Example"]
+        ALERT["🚨 Alert<br/>Aircraft Proximity"]
+        DETECT["🔍 Detection<br/>CV Inference"]
+        SENSOR["📡 Sensor<br/>Camera-001"]
+        TRACK1["✈️ Track-001"]
+        TRACK2["✈️ Track-002"]
+    end
+    
+    ALERT -->|is_evidenced_by| DETECT
+    DETECT -->|captured_by| SENSOR
+    SENSOR -->|observed| TRACK1
+    SENSOR -->|observed| TRACK2
+    TRACK1 -->|proximity| TRACK2
+```
+
 **Rule:** Every `Alert` must carry an evidence chain expressed as `Link` edges.
 
 #### Graph Storage and Query
@@ -201,16 +291,23 @@ make dev-down
 ```mermaid
 graph LR
     subgraph Frontend
-        WEB["apps/web\nNext.js + Cesium"]
+        WEB["apps/web
+Next.js + Cesium"]
     end
 
     subgraph Backend
-        RELAY["harpy-relay\nWS fanout auth rate limits"]
-        INGEST["harpy-ingest\nadapters normalization"]
-        FUSION["harpy-fusion\nconvergence rules alerts"]
-        GRAPH["harpy-graph\ngraph query API"]
-        AIP["harpy-aip\nAI Operator Interface"]
-        DETECT["harpy-detect\noptional CV"]
+        RELAY["harpy-relay
+WS fanout auth rate limits"]
+        INGEST["harpy-ingest
+adapters normalization"]
+        FUSION["harpy-fusion
+convergence rules alerts"]
+        GRAPH["harpy-graph
+graph query API"]
+        AIP["harpy-aip
+AI Operator Interface"]
+        DETECT["harpy-detect
+optional CV"]
     end
 
     subgraph Storage
@@ -276,6 +373,32 @@ graph LR
     W4 --> MAIN[Main Thread Cesium Primitive Updates]
 ```
 
+```mermaid
+sequenceDiagram
+    participant WS as WebSocket
+    participant W1 as ws-decode-worker
+    participant W2 as track-index-worker
+    participant W3 as cluster-worker
+    participant W4 as pack-worker
+    participant Main as Main Thread
+    participant Cesium as Cesium Primitives
+
+    WS->>W1: Protobuf Envelope
+    W1->>W1: Decode
+    W1->>W2: TrackDelta[]
+    
+    W2->>W2: Dedup & Index
+    W2->>W3: IndexedTracks
+    
+    W3->>W3: Cluster
+    W3->>W4: Clusters
+    
+    W4->>W4: Pack TypedArrays
+    W4->>Main: Transferable ArrayBuffers
+    
+    Main->>Cesium: Update Primitives
+```
+
 #### TypedArray Buffer Contract (TypeScript)
 
 ```typescript
@@ -300,6 +423,31 @@ interface RenderPayload {
 | Command Palette | `Ctrl/Cmd+K` | Jump to track/sensor/alert, saved queries, playback commands |
 | Shareable Scenes | URL state | Schema-versioned scene encode/decode with safe defaults |
 
+```mermaid
+graph TB
+    subgraph HUD["🖥️ HUD Layout"]
+        TOP["Top Bar<br/>Mode Controls<br/>DATA LINK Panel"]
+        RIGHT["Right Rail<br/>Alert Stack"]
+        BOTTOM["Bottom Bar<br/>DVR Timeline"]
+        CENTER["Center<br/>Cesium Globe"]
+        PALETTE["Cmd+K<br/>Command Palette"]
+    end
+    
+    subgraph Controls["🎮 Controls"]
+        DVR["DVR:<br/>▶️ ⏸️ ⏮️ ⏭️<br/>1x 2x 4x 8x"]
+        LAYERS["Layers:<br/>✈️ 🛰️ 📹 🌊"]
+        VISION["Vision:<br/>EO CRT NVG FLIR"]
+        HEALTH["Health:<br/>Fresh/Aging/Stale"]
+    end
+    
+    TOP --> LAYERS
+    TOP --> VISION
+    TOP --> HEALTH
+    RIGHT --> HEALTH
+    BOTTOM --> DVR
+    CENTER --> PALETTE
+```
+
 ### Backend Architecture
 
 #### Services
@@ -322,6 +470,25 @@ interface RenderPayload {
 | Object storage | S3/MinIO | Compressed delta segments, snapshots |
 | Graph locality | Postgres + H3 columns | Fast region-local graph filtering |
 
+```mermaid
+graph TB
+    subgraph StorageTiers["💾 Storage Tiers"]
+        HOT["🔥 Hot<br/>Redis<br/>1 hour TTL<br/>Active tracks"]
+        WARM["📊 Warm<br/>PostgreSQL<br/>30 days<br/>History + Graph"]
+        COLD["❄️ Cold<br/>S3/MinIO<br/>7 years<br/>Compliance"]
+    end
+    
+    subgraph AccessPatterns["📈 Access Patterns"]
+        REALTIME["Real-time<br/>Streaming"]
+        QUERY["Graph Queries<br/>Alerts"]
+        AUDIT["Audit Logs<br/>Compliance"]
+    end
+    
+    REALTIME --> HOT
+    QUERY --> WARM
+    AUDIT --> COLD
+```
+
 #### Streaming Protocol (Protobuf)
 
 - Transport: WebSocket with protobuf frames.
@@ -333,6 +500,28 @@ interface RenderPayload {
   - `SnapshotMeta`
   - `LinkUpsert`
 - Backpressure rule: drop `TrackDeltaBatch` first; never drop `AlertUpsert` or `ProviderStatus`.
+
+```mermaid
+graph TB
+    subgraph Messages["📨 Message Types"]
+        TRACK["TrackDeltaBatch<br/>Position updates<br/>⚠️ Droppable"]
+        ALERT["AlertUpsert<br/>Alert state<br/>🔒 Never drop"]
+        STATUS["ProviderStatus<br/>Health info<br/>🔒 Never drop"]
+        SNAPSHOT["SnapshotMeta<br/>Playback data"]
+        LINK["LinkUpsert<br/>Graph edges"]
+    end
+    
+    subgraph Priority["🎯 Priority Handling"]
+        HIGH["High Priority<br/>Critical alerts<br/>Health status"]
+        LOW["Low Priority<br/>Position updates"]
+    end
+    
+    TRACK --> LOW
+    ALERT --> HIGH
+    STATUS --> HIGH
+    SNAPSHOT --> LOW
+    LINK --> LOW
+```
 
 ```proto
 syntax = "proto3";
@@ -355,6 +544,26 @@ message Envelope {
 - Circuit breaker states: `Closed -> Open -> HalfOpen -> Closed`.
 - Freshness levels: `Fresh`, `Aging`, `Stale`, `Critical`.
 - Failover behavior: primary provider to fallback provider, surfaced as `ProviderDegraded` alert.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed: Initial
+    Closed --> Open: Error rate > 50%
+    Open --> HalfOpen: 30s timeout
+    HalfOpen --> Closed: Success
+    HalfOpen --> Open: Failure
+    
+    note right of Closed
+        Normal operation
+        Requests forwarded
+    end note
+    
+    note left of Open
+        Circuit tripped
+        Returns fallback
+        ProviderDegraded alert
+    end note
+```
 
 | Freshness | HUD Behavior |
 |---|---|
@@ -393,6 +602,33 @@ The AI Operator Interface (AIP) receives schema summaries and uses tools to prod
 - `set_layers(layer_mask)`
 - `run_graph_query(template, params)`
 
+```mermaid
+graph LR
+    subgraph AI["🤖 AI Operator"]
+        LLM["LLM<br/>Schema Summary"]
+        TOOLS["Tool Allow-List"]
+    end
+    
+    subgraph Guardrails["🛡️ Guardrails"]
+        VALID["Validation"]
+        CONFIRM["Human Confirm"]
+        AUDIT["Audit Log"]
+    end
+    
+    subgraph Actions["⚡ Actions"]
+        SEEK["seek_to_time"]
+        BBOX["seek_to_bbox"]
+        LAYERS["set_layers"]
+        QUERY["run_graph_query"]
+    end
+    
+    LLM --> TOOLS
+    TOOLS --> VALID
+    VALID --> CONFIRM
+    CONFIRM --> ACTIONS
+    ACTIONS --> AUDIT
+```
+
 #### Guardrails
 
 - Allow-list query templates only.
@@ -410,6 +646,30 @@ The AI Operator Interface (AIP) receives schema summaries and uses tools to prod
 ## Deployment
 
 ### Cloud, GovCloud, Air-Gapped
+
+```mermaid
+graph TB
+    subgraph DeploymentModes["🚀 Deployment Modes"]
+        LOCAL["💻 Local Dev<br/>docker-compose<br/>Single node"]
+        CLOUD["☁️ Cloud<br/>VPC + WAF<br/>Private subnets"]
+        GOV["🏛️ GovCloud<br/>Hardened K8s<br/>RBAC + mTLS"]
+        AIR["🔒 Air-Gapped<br/>No external calls<br/>Local replay"]
+    end
+    
+    subgraph Infra["🔧 Infrastructure"]
+        K8S["Kubernetes"]
+        HELM["Helm Charts"]
+        KUST["Kustomize"]
+    end
+    
+    LOCAL --> K8S
+    CLOUD --> K8S
+    GOV --> K8S
+    AIR --> K8S
+    
+    K8S --> HELM
+    K8S --> KUST
+```
 
 - **Local dev**: Single-node docker-compose stack.
 - **Cloud**: VPC deployment, private subnets, WAF ingress.
@@ -480,6 +740,22 @@ The AI Operator Interface (AIP) receives schema summaries and uses tools to prod
 | **Phase 2** | Week 3 | DVR time-travel + snapshots + shareable scenes |
 | **Phase 3** | Week 4-6 | Dynamic ontology + fusion alerts + graph queries |
 | **Phase 4** | Week 7+ | Enterprise posture (K8s/RBAC/GovCloud), optional CV |
+
+```mermaid
+gantt
+    title HARPY Development Roadmap
+    dateFormat YYYY-MM-DD
+    section Phase 0
+    Infrastructure         :done, p0, 2026-02-18, 3d
+    section Phase 1
+    Live Streaming         :done, p1, after p0, 10d
+    section Phase 2
+    DVR + Snapshots        :p2, after p1, 7d
+    section Phase 3
+    Fusion + Alerts        :p3, after p2, 14d
+    section Phase 4
+    Enterprise             :p4, after p3, 14d
+```
 
 ### Phase 0
 

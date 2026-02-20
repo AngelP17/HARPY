@@ -25,7 +25,7 @@ impl TleMockProvider {
 
         // Common satellite orbits (simplified)
         // (name, inclination_deg, altitude_m, period_sec)
-        let orbits = vec![
+        let orbits = [
             ("ISS", 51.6, 408000.0, 90.0 * 60.0),      // ISS orbit
             ("GPS", 55.0, 20200000.0, 12.0 * 3600.0),  // GPS orbit
             ("Starlink", 53.0, 550000.0, 95.0 * 60.0), // Starlink orbit

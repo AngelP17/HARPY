@@ -238,6 +238,7 @@ async fn find_snapshot(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn count_deltas(
     pool: &sqlx::PgPool,
     start_ts_ms: u64,

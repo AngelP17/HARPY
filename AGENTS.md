@@ -72,6 +72,67 @@
 
 ---
 
+## System Architecture
+
+```mermaid
+graph TB
+    subgraph Frontend["🖥️ Frontend (Next.js + Cesium)"]
+        WEB["apps/web"]
+        subgraph Workers["⚙️ Worker Pipeline"]
+            W1["ws-decode-worker"]
+            W2["track-index-worker"]
+            W3["cluster-worker"]
+            W4["pack-worker"]
+        end
+        RENDER["Cesium Primitives"]
+    end
+
+    subgraph Backend["🔧 Backend Services (Rust/Axum)"]
+        RELAY["harpy-relay<br/>WebSocket Fanout"]
+        INGEST["harpy-ingest<br/>Provider Adapters"]
+        FUSION["harpy-fusion<br/>Rules Engine"]
+        GRAPH["harpy-graph<br/>Graph API"]
+        AIP["harpy-aip<br/>AI Operator"]
+    end
+
+    subgraph Storage["💾 Storage"]
+        REDIS[("Redis<br/>Hot State")]
+        PG[("PostgreSQL<br/>Cold/Audit")]
+        S3[("S3/MinIO<br/>Snapshots")]
+    end
+
+    subgraph Providers["📡 Data Providers"]
+        ADSB["ADS-B"]
+        TLE["TLE/Satellite"]
+        CAM["Cameras"]
+        SEIS["Seismic"]
+        WX["Weather"]
+    end
+
+    WEB <-->|"WebSocket<br/>protobuf"| RELAY
+    W1 --> W2 --> W3 --> W4 --> RENDER
+    
+    RELAY --> INGEST
+    INGEST --> FUSION
+    FUSION --> GRAPH
+    RELAY --> AIP
+    AIP --> GRAPH
+    
+    INGEST --> ADSB
+    INGEST --> TLE
+    INGEST --> CAM
+    INGEST --> SEIS
+    INGEST --> WX
+    
+    INGEST --> REDIS
+    INGEST --> PG
+    FUSION --> PG
+    GRAPH --> PG
+    INGEST --> S3
+```
+
+---
+
 ## Project Structure (Planned)
 
 ```
@@ -153,6 +214,22 @@ Workers publish render-ready buffers via Transferable ArrayBuffers. Main thread 
 | `cluster-worker` | layer-specific clustering rules |
 | `pack-worker` | packs float buffers (lat/lon/alt/heading/speed + colors + id map) |
 
+```mermaid
+flowchart LR
+    WS["📡 WebSocket"] -->|protobuf| W1["ws-decode-worker"]
+    W1 -->|decoded| W2["track-index-worker"]
+    W2 -->|indexed| W3["cluster-worker"]
+    W3 -->|clustered| W4["pack-worker"]
+    W4 -->|TypedArrays| MAIN["🎨 Main Thread<br/>Cesium Primitives"]
+    
+    style WS fill:#e1f5ff
+    style W1 fill:#fff4e1
+    style W2 fill:#fff4e1
+    style W3 fill:#fff4e1
+    style W4 fill:#fff4e1
+    style MAIN fill:#e8f5e9
+```
+
 ### TypedArray Render Buffer Contract
 
 ```typescript
@@ -190,6 +267,31 @@ interface RenderPayload {
   - `SnapshotMeta` — playback snapshot metadata
   - `LinkUpsert` — relationship updates
 
+```mermaid
+sequenceDiagram
+    participant Client as Frontend Client
+    participant Relay as harpy-relay
+    participant Ingest as harpy-ingest
+    participant Redis as Redis Pub/Sub
+    participant PG as PostgreSQL
+
+    Client->>Relay: Subscribe (viewport, layers, time)
+    Relay->>Ingest: Forward subscription
+    
+    loop Every Update Cycle
+        Ingest->>Redis: Publish TrackDeltaBatch
+        Redis->>Relay: Broadcast to subscribers
+        Relay->>Client: TrackDeltaBatch (protobuf)
+    end
+    
+    alt Playback Mode
+        Client->>Relay: Seek (time_range)
+        Relay->>PG: Query snapshots + deltas
+        PG->>Relay: Historical batches
+        Relay->>Client: TrackDeltaBatch (historical)
+    end
+```
+
 ### Health Model
 
 **Circuit Breaker States:** Closed → Open → HalfOpen → Closed
@@ -197,6 +299,31 @@ interface RenderPayload {
 **Freshness Levels:** Fresh / Aging / Stale / Critical
 
 **Failover:** primary provider → fallback provider (surfaced as ProviderDegraded alert)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed: Initial
+    Closed --> Open: Error rate > 50%<br/>over 10s
+    Open --> HalfOpen: Timeout 30s
+    HalfOpen --> Closed: Success
+    HalfOpen --> Open: Failure
+    
+    note right of Closed
+        Normal operation
+        Requests allowed
+    end note
+    
+    note left of Open
+        Circuit tripped
+        Requests blocked
+        Returns fallback/error
+    end note
+    
+    note right of HalfOpen
+        Testing recovery
+        Limited requests
+    end note
+```
 
 ### AI Operator Interface (AIP)
 
@@ -222,6 +349,36 @@ The LLM receives schema summaries and uses tool calls to produce SEEK/Filter req
 | **Phase 2** | Week 3 | DVR time-travel + snapshots + shareable scenes |
 | **Phase 3** | Week 4-6 | Dynamic ontology + fusion alerts + graph queries |
 | **Phase 4** | Week 7+ | Enterprise posture (K8s, RBAC, GovCloud), optional CV |
+
+```mermaid
+gantt
+    title HARPY Development Timeline
+    dateFormat YYYY-MM-DD
+    section Phase 0
+    Monorepo Setup           :done, p0_1, 2026-02-18, 1d
+    Protobuf Contracts       :done, p0_2, after p0_1, 1d
+    Mock Providers           :done, p0_3, after p0_2, 1d
+    
+    section Phase 1
+    Live Streaming           :done, p1_1, after p0_3, 5d
+    Health Model             :done, p1_2, after p1_1, 3d
+    Frontend Shell           :active, p1_3, after p1_1, 7d
+    
+    section Phase 2
+    DVR Time-Travel          :p2, after p1_3, 7d
+    Snapshots                :p2_1, after p1_3, 4d
+    Shareable Scenes         :p2_2, after p2_1, 3d
+    
+    section Phase 3
+    Fusion Engine            :p3, after p2, 14d
+    Graph Queries            :p3_1, after p2, 10d
+    Alert System             :p3_2, after p3, 7d
+    
+    section Phase 4
+    Enterprise Features      :p4, after p3_2, 14d
+    Kubernetes               :p4_1, after p3_2, 7d
+    AI Operator              :p4_2, after p3_2, 10d
+```
 
 ### Current Status: Phase 0
 

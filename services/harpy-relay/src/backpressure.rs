@@ -6,6 +6,8 @@
 //! - ProviderStatus: Never dropped (health monitoring)
 //! - SnapshotMeta: Never dropped (control messages)
 
+#![allow(dead_code)]
+
 use harpy_proto::harpy::v1::Envelope;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -123,6 +125,7 @@ impl BackpressureChannel {
     }
 
     /// Send an envelope with appropriate backpressure handling
+    #[allow(clippy::result_large_err)]
     pub fn send(&self, envelope: Envelope) -> Result<(), Envelope> {
         // Determine message priority based on payload type
         let is_high_priority = self.is_high_priority(&envelope);

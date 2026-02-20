@@ -24,7 +24,7 @@ impl AdsbMockProvider {
         let mut tracks = Vec::with_capacity(count);
 
         // San Francisco Bay Area routes (SFO -> OAK -> SJC -> SMF)
-        let routes = vec![
+        let routes = [
             (37.7749, -122.4194, 37.6213, -122.3790), // SFO -> OAK
             (37.3387, -121.8853, 37.7749, -122.4194), // SJC -> SFO
             (38.5541, -121.9292, 37.7749, -122.4194), // SMF -> SFO

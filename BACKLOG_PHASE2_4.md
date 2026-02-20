@@ -4,13 +4,67 @@ Date: 2026-02-20
 Scope: Remaining work after Phase 1 backend milestone claim  
 Owners: Claude (Backend), Gemini (Frontend)
 
+---
+
+## Workflow Overview
+
+```mermaid
+graph LR
+    subgraph Phase1["✅ Phase 1"]
+        P1["Live Streaming<br/>+ Health"]
+    end
+    
+    subgraph Phase2["🔜 Phase 2"]
+        P2["DVR Time-Travel<br/>+ Snapshots"]
+    end
+    
+    subgraph Phase3["🔜 Phase 3"]
+        P3["Fusion Alerts<br/>+ Graph Queries"]
+    end
+    
+    subgraph Phase4["🔜 Phase 4"]
+        P4["Enterprise Posture<br/>+ AI Operator"]
+    end
+    
+    P1 --> P2 --> P3 --> P4
+    
+    style P1 fill:#c8e6c9
+    style P2 fill:#fff9c4
+    style P3 fill:#ffccbc
+    style P4 fill:#e1bee7
+```
+
+---
+
 ## Rules
 
 - Every item must have a reproducible verification step.
 - No item is complete unless acceptance criteria are met.
 - Backend and frontend must both pass contract compatibility against `proto/harpy/v1/harpy.proto`.
 
+---
+
 ## P0 Blockers (Must Clear First)
+
+```mermaid
+graph TB
+    subgraph Blockers["🚨 Phase 0 Blockers"]
+        B1["P0-1: Fix harpy-fusion<br/>compile failure"]
+        B2["P0-2: Align docker-compose<br/>with workflow"]
+        B3["P0-3: Sync docs<br/>to reality"]
+    end
+    
+    DONE["✅ All Blockers Resolved"]
+    
+    B1 --> DONE
+    B2 --> DONE
+    B3 --> DONE
+    
+    style B1 fill:#c8e6c9
+    style B2 fill:#c8e6c9
+    style B3 fill:#c8e6c9
+    style DONE fill:#81c784
+```
 
 - [x] `P0-1` Fix `harpy-fusion` compile failure (Rust let-chain syntax issue).
   - Owner: Claude
@@ -33,7 +87,45 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - Manual review of updated sections.
 
+---
+
 ## Backend Phase 2 (Claude)
+
+```mermaid
+graph TD
+    subgraph B2["🔧 Backend Phase 2 Tasks"]
+        B2_1["B2-1: Snapshot Model<br/>+ Storage Contract"]
+        B2_2["B2-2: Periodic Snapshot<br/>Creation Job"]
+        B2_3["B2-3: Seek API for<br/>Playback Ranges"]
+        B2_4["B2-4: Relay Playback<br/>Mode Support"]
+        B2_5["B2-5: Backpressure<br/>Semantics"]
+    end
+    
+    subgraph Storage["💾 Storage"]
+        S3["S3/MinIO<br/>Snapshots"]
+        PG["PostgreSQL<br/>Deltas"]
+    end
+    
+    subgraph Services["🔌 Services"]
+        INGEST["harpy-ingest"]
+        RELAY["harpy-relay"]
+    end
+    
+    B2_1 --> S3
+    B2_2 --> INGEST
+    B2_3 --> RELAY
+    B2_4 --> RELAY
+    B2_5 --> RELAY
+    
+    INGEST --> S3
+    RELAY --> PG
+    
+    style B2_1 fill:#c8e6c9
+    style B2_2 fill:#c8e6c9
+    style B2_3 fill:#c8e6c9
+    style B2_4 fill:#c8e6c9
+    style B2_5 fill:#c8e6c9
+```
 
 - [x] `B2-1` Snapshot model + storage contract.
   - Acceptance:
@@ -68,7 +160,37 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - `backpressure.rs` module implements differentiated priority channels.
 
+---
+
 ## Frontend Phase 1 Catch-Up (Gemini)
+
+```mermaid
+graph LR
+    subgraph F1["🎨 Frontend Phase 1 Tasks"]
+        F1_1["F1-1: WebSocket +<br/>protobuf decode"]
+        F1_2["F1-2: Primitive-only<br/>Cesium rendering"]
+        F1_3["F1-3: DATA LINK<br/>health panel"]
+        F1_4["F1-4: Layer-based<br/>subscription updates"]
+    end
+    
+    subgraph Frontend["Frontend Stack"]
+        WS["WebSocket Client"]
+        WORKERS["Web Workers"]
+        CESIUM["Cesium Primitives"]
+        HUD["DATA LINK Panel"]
+    end
+    
+    F1_1 --> WS
+    F1_1 --> WORKERS
+    F1_2 --> CESIUM
+    F1_3 --> HUD
+    F1_4 --> WS
+    
+    style F1_1 fill:#c8e6c9
+    style F1_2 fill:#c8e6c9
+    style F1_3 fill:#c8e6c9
+    style F1_4 fill:#c8e6c9
+```
 
 - [x] `F1-1` WebSocket + protobuf decode loop in workers.
   - Acceptance:
@@ -95,7 +217,43 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - Turning layers off stops matching tracks in viewport.
 
+---
+
 ## Backend Phase 3 (Claude)
+
+```mermaid
+graph TD
+    subgraph B3["🔧 Backend Phase 3 Tasks"]
+        B3_1["B3-1: Fusion Rules<br/>Engine v1"]
+        B3_2["B3-2: Alert + Link<br/>Publication Pipeline"]
+        B3_3["B3-3: Graph Query<br/>API Hardened"]
+        B3_4["B3-4: Audit Logging<br/>for Actions"]
+    end
+    
+    subgraph Rules["📋 Rule Templates"]
+        R1["Proximity Rules"]
+        R2["Anomaly Detection"]
+        R3["Pattern Matching"]
+    end
+    
+    subgraph Outputs["📤 Outputs"]
+        ALERTS["AlertUpsert"]
+        LINKS["LinkUpsert"]
+        AUDIT["audit_log"]
+    end
+    
+    B3_1 --> Rules
+    Rules --> B3_2
+    B3_2 --> ALERTS
+    B3_2 --> LINKS
+    B3_3 --> GRAPH["Graph Query API"]
+    B3_4 --> AUDIT
+    
+    style B3_1 fill:#ffccbc
+    style B3_2 fill:#ffccbc
+    style B3_3 fill:#ffccbc
+    style B3_4 fill:#ffccbc
+```
 
 - [ ] `B3-1` Fusion rules engine v1 (beyond baseline convergence).
   - Acceptance:
@@ -123,7 +281,36 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - SQL query on `audit_log` returns expected rows.
 
+---
+
 ## Frontend Phase 2-3 (Gemini)
+
+```mermaid
+graph TD
+    subgraph F23["🎨 Frontend Phase 2-3 Tasks"]
+        F2_1["F2-1: DVR Timeline<br/>UI Controls"]
+        F2_2["F2-2: Shareable<br/>Scene URLs"]
+        F3_1["F3-1: Alert Stack +<br/>Evidence Panel"]
+        F3_2["F3-2: Graph Query<br/>UI Templates"]
+    end
+    
+    subgraph Components["🧩 Components"]
+        DVR["DVR Timeline"]
+        URL["URL State Manager"]
+        ALERT["Alert Panel"]
+        GRAPH["Graph Query UI"]
+    end
+    
+    F2_1 --> DVR
+    F2_2 --> URL
+    F3_1 --> ALERT
+    F3_2 --> GRAPH
+    
+    style F2_1 fill:#c8e6c9
+    style F2_2 fill:#c8e6c9
+    style F3_1 fill:#c8e6c9
+    style F3_2 fill:#c8e6c9
+```
 
 - [x] `F2-1` DVR timeline (live/scrub/play/speed/event markers).
   - Acceptance:
@@ -150,7 +337,53 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - Query responses match API output.
 
+---
+
 ## Backend Phase 4 (Claude)
+
+```mermaid
+graph TD
+    subgraph B4["🔧 Backend Phase 4 Tasks"]
+        B4_1["B4-1: AIP Execution<br/>Guardrails"]
+        B4_2["B4-2: Signed Export<br/>Workflow"]
+        B4_3["B4-3: RBAC + ABAC<br/>Enforcement"]
+        B4_4["B4-4: Enterprise<br/>Deployment Artifacts"]
+        B4_5["B4-5: Optional<br/>harpy-detect Service"]
+    end
+    
+    subgraph AI["🤖 AI Operator"]
+        TOOLS["Tool Allow-List"]
+        VALID["Input Validation"]
+        CONFIRM["Confirmation Gate"]
+    end
+    
+    subgraph Security["🔒 Security"]
+        RBAC["RBAC/ABAC Roles"]
+        EXPORT["Signed Exports"]
+    end
+    
+    subgraph Infra["☸️ Infrastructure"]
+        K8S["Kubernetes"]
+        HELM["Helm Charts"]
+        GOV["GovCloud Profile"]
+    end
+    
+    B4_1 --> TOOLS
+    B4_1 --> VALID
+    B4_1 --> CONFIRM
+    B4_2 --> EXPORT
+    B4_3 --> RBAC
+    B4_4 --> K8S
+    B4_4 --> HELM
+    B4_4 --> GOV
+    B4_5 --> DETECT["CV Detection"]
+    
+    style B4_1 fill:#ffccbc
+    style B4_2 fill:#ffccbc
+    style B4_3 fill:#ffccbc
+    style B4_4 fill:#ffccbc
+    style B4_5 fill:#ffccbc
+```
 
 - [ ] `B4-1` AIP execution guardrails complete.
   - Acceptance:
@@ -186,7 +419,34 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - `GET /health` and `POST /detect` smoke tests pass.
 
+---
+
 ## Frontend Phase 4 (Gemini)
+
+```mermaid
+graph LR
+    subgraph F4["🎨 Frontend Phase 4 Tasks"]
+        F4_1["F4-1: AI Operator UX<br/>+ Confirmation"]
+        F4_2["F4-2: Export UI +<br/>Watermark Visibility"]
+        F4_3["F4-3: Role-Aware<br/>UI States"]
+    end
+    
+    subgraph UX["🎯 UX Components"]
+        PALETTE["Command Palette"]
+        CHAT["Chat Panel"]
+        EXPORT["Export Dialog"]
+        RBAC["Role Indicators"]
+    end
+    
+    F4_1 --> PALETTE
+    F4_1 --> CHAT
+    F4_2 --> EXPORT
+    F4_3 --> RBAC
+    
+    style F4_1 fill:#c8e6c9
+    style F4_2 fill:#c8e6c9
+    style F4_3 fill:#c8e6c9
+```
 
 - [x] `F4-1` AI operator UX (palette/chat + structured request preview).
   - Acceptance:
@@ -207,7 +467,35 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - Role-switch test shows expected capability gating.
 
+---
+
 ## Integration Milestones
+
+```mermaid
+graph LR
+    subgraph Milestones["🔗 Integration Milestones"]
+        M1["M1: Live E2E<br/>Ingest → Redis → Relay → Frontend"]
+        M2["M2: Alert E2E<br/>Fusion → Redis → Relay → Alert Stack"]
+        M3["M3: AI E2E<br/>Frontend → AIP → Graph → Audit Log"]
+    end
+    
+    subgraph Owners["👥 Owners"]
+        CLAUDE["Claude"]
+        GEMINI["Gemini"]
+        CODEX["Codex"]
+    end
+    
+    M1 -.->|Claude + Gemini| CLAUDE
+    M1 -.-> GEMINI
+    M2 -.->|Codex + Gemini| CODEX
+    M2 -.-> GEMINI
+    M3 -.->|Codex + Gemini| CODEX
+    M3 -.-> GEMINI
+    
+    style M1 fill:#fff9c4
+    style M2 fill:#ffccbc
+    style M3 fill:#e1bee7
+```
 
 - [ ] `M1` Live E2E: `harpy-ingest -> Redis -> harpy-relay -> frontend`.
   - Owner: Claude + Gemini
@@ -224,6 +512,8 @@ Owners: Claude (Backend), Gemini (Frontend)
   - Verify:
     - Tool action executes and audit record is persisted.
 
+---
+
 ## Weekly Reporting Template
 
 Use this format in standups:
@@ -234,4 +524,59 @@ Week of YYYY-MM-DD
 - In Progress: [IDs]
 - Blocked: [IDs + blocker reason]
 - Next: [IDs]
+```
+
+---
+
+## Task Dependency Graph
+
+```mermaid
+graph TD
+    subgraph P0["✅ Phase 0"]
+        P0_DONE["All Blockers Resolved"]
+    end
+    
+    subgraph P1["✅ Phase 1"]
+        F1_ALL["F1-1 → F1-4<br/>Complete"]
+    end
+    
+    subgraph P2["🔜 Phase 2"]
+        B2_ALL["B2-1 → B2-5"]
+        F2_ALL["F2-1 → F2-2"]
+    end
+    
+    subgraph P3["🔜 Phase 3"]
+        B3_ALL["B3-1 → B3-4"]
+        F3_ALL["F3-1 → F3-2"]
+        M2["M2: Alert E2E"]
+    end
+    
+    subgraph P4["🔜 Phase 4"]
+        B4_ALL["B4-1 → B4-5"]
+        F4_ALL["F4-1 → F4-3"]
+        M3["M3: AI E2E"]
+    end
+    
+    P0_DONE --> P1
+    P1 --> P2
+    P2 --> P3
+    P3 --> P4
+    
+    B2_ALL --> F2_ALL
+    F2_ALL --> M1["M1: Live E2E"]
+    
+    B3_ALL --> F3_ALL
+    F3_ALL --> M2
+    
+    B4_ALL --> F4_ALL
+    F4_ALL --> M3
+    
+    style P0_DONE fill:#81c784
+    style F1_ALL fill:#81c784
+    style B2_ALL fill:#c8e6c9
+    style F2_ALL fill:#c8e6c9
+    style B3_ALL fill:#ffccbc
+    style F3_ALL fill:#ffccbc
+    style B4_ALL fill:#ffccbc
+    style F4_ALL fill:#ffccbc
 ```

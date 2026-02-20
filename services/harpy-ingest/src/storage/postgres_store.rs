@@ -122,6 +122,7 @@ impl PostgresStore {
     }
 
     /// Clean up old track deltas (older than retention period)
+    #[allow(dead_code)]
     pub async fn cleanup_old_deltas(&self, retention_hours: i32) -> anyhow::Result<u64> {
         let cutoff_ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?

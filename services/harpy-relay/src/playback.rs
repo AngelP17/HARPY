@@ -3,6 +3,8 @@
 //! Handles playback subscriptions by querying historical track deltas
 //! from Postgres and streaming them to clients at playback speed.
 
+#![allow(dead_code)]
+
 use crate::subscription::Subscription;
 use harpy_proto::harpy::v1::{
     envelope::Payload, Envelope, LayerType, Position, TrackDelta, TrackDeltaBatch,
@@ -31,7 +33,7 @@ impl PlaybackState {
     pub fn new(start_ts_ms: u64, end_ts_ms: u64, speed: f32) -> Self {
         Self {
             current_ts_ms: start_ts_ms,
-            speed: speed.max(0.25).min(8.0), // Clamp between 0.25x and 8x
+            speed: speed.clamp(0.25, 8.0), // Clamp between 0.25x and 8x
             is_playing: true,
             end_ts_ms,
         }
@@ -79,7 +81,7 @@ impl PlaybackState {
 
     /// Set playback speed
     pub fn set_speed(&mut self, speed: f32) {
-        self.speed = speed.max(0.25).min(8.0);
+        self.speed = speed.clamp(0.25, 8.0);
     }
 }
 

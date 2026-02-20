@@ -13,6 +13,29 @@
 | **Gemini** | Frontend (All Phases) | 🔜 Ready to Start |
 | **Codex** | Phase 3-4 Backend (Fusion + Graph + AI) | 🔜 Ready to Start |
 
+```mermaid
+graph LR
+    subgraph Teams["👥 Team Responsibilities"]
+        C["🤖 Claude<br/>Backend Phase 0-2"]
+        G["🌟 Gemini<br/>Frontend All Phases"]
+        X["📚 Codex<br/>Backend Phase 3-4"]
+    end
+    
+    subgraph Deliverables["📦 Key Deliverables"]
+        D1["Relay + Ingest<br/>Services"]
+        D2["Cesium HUD<br/>WebSocket Pipeline"]
+        D3["Fusion + Graph<br/>+ AI Operator"]
+    end
+    
+    C --> D1
+    G --> D2
+    X --> D3
+    
+    style C fill:#e3f2fd
+    style G fill:#f3e5f5
+    style X fill:#e8f5e9
+```
+
 ---
 
 ## Phase 0: Foundation (✅ COMPLETE - Claude)
@@ -235,14 +258,30 @@ ws.send(Envelope.encode({ subscription_request: subscription }).finish());
 **This is the shared contract between all teams.**
 
 **Message Flow:**
-```
-Frontend ─┬─> SubscriptionRequest ──> harpy-relay
-          │
-          └─> (future) AIP tool calls ──> harpy-aip
+```mermaid
+sequenceDiagram
+    participant FE as Frontend (Gemini)
+    participant RELAY as harpy-relay (Claude)
+    participant INGEST as harpy-ingest (Claude)
+    participant FUSION as harpy-fusion (Codex)
+    participant REDIS as Redis
+    participant AIP as harpy-aip (Codex)
 
-harpy-relay ──> TrackDeltaBatch ──> Frontend
-harpy-relay ──> AlertUpsert ──> Frontend
-harpy-relay ──> ProviderStatus ──> Frontend
+    FE->>RELAY: SubscriptionRequest
+    RELAY->>INGEST: Forward subscription
+    
+    loop Live Data
+        INGEST->>REDIS: Publish TrackDeltaBatch
+        REDIS->>RELAY: Subscribe channel
+        RELAY->>FE: TrackDeltaBatch
+    end
+    
+    FUSION->>REDIS: Publish AlertUpsert
+    REDIS->>RELAY: Subscribe channel
+    RELAY->>FE: AlertUpsert
+    
+    FE->>AIP: AIP tool calls (future)
+    AIP->>RELAY: seek_to_time, etc.
 ```
 
 **Gemini:** Use generated TypeScript types (will need to run protoc)
@@ -258,6 +297,33 @@ harpy-relay ──> ProviderStatus ──> Frontend
 
 **Gemini:** Receives final messages via WebSocket (already decoded)
 **Codex:** Publishes to these channels for relay to fanout
+
+```mermaid
+graph LR
+    subgraph Publishers
+        INGEST["harpy-ingest"]
+        FUSION["harpy-fusion"]
+    end
+    
+    subgraph Channels["📡 Redis Pub/Sub"]
+        CH1["tracks:updates"]
+        CH2["alerts:updates"]
+        CH3["provider:status:*"]
+    end
+    
+    subgraph Subscribers
+        RELAY["harpy-relay"]
+        CLIENT["Frontend Client"]
+    end
+    
+    INGEST --> CH1
+    INGEST --> CH3
+    FUSION --> CH2
+    CH1 --> RELAY
+    CH2 --> RELAY
+    CH3 --> RELAY
+    RELAY -->|WebSocket| CLIENT
+```
 
 ### 3. Database Tables
 
@@ -359,6 +425,50 @@ curl -X POST http://localhost:8083/graph/query \
 ---
 
 ## Alignment Verification Checklist
+
+```mermaid
+graph TD
+    P0["✅ Phase 0 Complete"] --> P1["✅ Phase 1 Complete"]
+    P1 --> P2["🔜 Phase 2 DVR"]
+    P2 --> P3["🔜 Phase 3 Fusion"]
+    P3 --> P4["🔜 Phase 4 Enterprise"]
+    
+    subgraph P0Items["Phase 0 Deliverables"]
+        P0_1["Protobuf Schema"]
+        P0_2["Database Schema"]
+        P0_3["Mock Providers"]
+        P0_4["Docker Compose"]
+        P0_5["CI/CD Pipeline"]
+    end
+    
+    subgraph P1Items["Phase 1 Deliverables"]
+        P1_1["Redis Persistence"]
+        P1_2["WebSocket Relay"]
+        P1_3["Frontend Connection"]
+        P1_4["Health Dashboard"]
+    end
+    
+    subgraph P2Items["Phase 2 Deliverables"]
+        P2_1["Snapshot System"]
+        P2_2["Seek API"]
+        P2_3["DVR Timeline"]
+        P2_4["Shareable URLs"]
+    end
+    
+    subgraph P3Items["Phase 3 Deliverables"]
+        P3_1["Fusion Rules"]
+        P3_2["Alert System"]
+        P3_3["Graph Queries"]
+        P3_4["Evidence Chains"]
+    end
+    
+    subgraph P4Items["Phase 4 Deliverables"]
+        P4_1["AI Operator"]
+        P4_2["Kubernetes"]
+        P4_3["RBAC System"]
+        P4_4["GovCloud Profile"]
+    end
+```
 
 ### Phase 0 (✅ Complete)
 - [x] Protobuf schema defines all message types
@@ -484,4 +594,3 @@ protoc --plugin=protoc-gen-ts_proto=./node_modules/.bin/protoc-gen-ts_proto \
 1. Claude: Complete Phase 2 backend (B2-1 through B2-5)
 2. Gemini: Continue frontend development (Phase 1 catch-up + Phase 2)
 3. Codex: Begin Phase 3 when Phase 2 backend stabilizes
-

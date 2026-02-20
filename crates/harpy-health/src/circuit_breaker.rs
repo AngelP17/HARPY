@@ -30,17 +30,14 @@ impl CircuitBreaker {
     where
         F: FnOnce() -> Result<T, E>,
     {
-        match self.state {
-            CircuitState::Open => {
-                if let Some(last_failure) = self.last_failure_time {
-                    if last_failure.elapsed() >= self.timeout {
-                        self.state = CircuitState::HalfOpen;
-                    } else {
-                        return Err(CircuitBreakerError::CircuitOpen);
-                    }
+        if self.state == CircuitState::Open {
+            if let Some(last_failure) = self.last_failure_time {
+                if last_failure.elapsed() >= self.timeout {
+                    self.state = CircuitState::HalfOpen;
+                } else {
+                    return Err(CircuitBreakerError::CircuitOpen);
                 }
             }
-            _ => {}
         }
 
         match f() {

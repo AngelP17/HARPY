@@ -2,6 +2,8 @@
 //!
 //! Implements storage backends for snapshots: MinIO/S3 and local filesystem.
 
+#![allow(dead_code)]
+
 use super::model::{Snapshot, SnapshotMetadata};
 use anyhow::{Context, Result};
 use async_trait::async_trait;

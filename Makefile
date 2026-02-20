@@ -51,7 +51,15 @@ dev-health:
 		http://localhost:8083/health \
 		http://localhost:8084/health ; do \
 		printf "  %s ... " "$$url"; \
-		curl -fsS "$$url" > /dev/null; \
+		attempt=0; \
+		until curl -fsS "$$url" > /dev/null; do \
+			attempt=$$((attempt + 1)); \
+			if [ $$attempt -ge 30 ]; then \
+				echo "failed"; \
+				exit 1; \
+			fi; \
+			sleep 2; \
+		done; \
 		echo "ok"; \
 	done
 

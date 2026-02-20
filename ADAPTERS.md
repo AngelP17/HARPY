@@ -4,6 +4,66 @@
 
 ---
 
+## Provider Data Flow
+
+```mermaid
+graph TB
+    subgraph Ingest["🔧 harpy-ingest Service"]
+        POLL["Polling Scheduler"]
+        NORM["Data Normalizer"]
+    end
+    
+    subgraph Providers["📡 External Data Providers"]
+        ADSB["ADS-B<br/>(OpenSky)"]
+        TLE["TLE/Satellite<br/>(CelesTrak)"]
+        SEIS["Seismic<br/>(USGS)"]
+        WX["Weather<br/>(NWS)"]
+        RADAR["Radar<br/>(NEXRAD)"]
+        CAM["Cameras<br/>(Local Fixtures)"]
+    end
+    
+    subgraph Storage["💾 HARPY Storage"]
+        REDIS[("Redis<br/>Hot State")]
+        PG[("PostgreSQL<br/>Track History")]
+        S3[("S3/MinIO<br/>Snapshots")]
+    end
+    
+    subgraph Downstream["⬇️ Downstream Services"]
+        RELAY["harpy-relay<br/>WebSocket Fanout"]
+        FUSION["harpy-fusion<br/>Alert Generation"]
+    end
+    
+    POLL --> ADSB
+    POLL --> TLE
+    POLL --> SEIS
+    POLL --> WX
+    POLL --> RADAR
+    POLL --> CAM
+    
+    ADSB --> NORM
+    TLE --> NORM
+    SEIS --> NORM
+    WX --> NORM
+    RADAR --> NORM
+    CAM --> NORM
+    
+    NORM --> REDIS
+    NORM --> PG
+    NORM --> S3
+    
+    REDIS --> RELAY
+    REDIS --> FUSION
+    
+    style ADSB fill:#e3f2fd
+    style TLE fill:#e3f2fd
+    style SEIS fill:#e3f2fd
+    style WX fill:#e3f2fd
+    style RADAR fill:#e3f2fd
+    style CAM fill:#e3f2fd
+```
+
+---
+
 ## Data Providers
 
 ### 1. ADS-B (Automatic Dependent Surveillance-Broadcast)
@@ -97,7 +157,64 @@
 
 ---
 
+## Provider Configuration Matrix
+
+```mermaid
+flowchart LR
+    subgraph Config["⚙️ Environment Configuration"]
+        ENV_OFF[".env.offline<br/>Development"]
+        ENV_ON[".env.online<br/>Production"]
+    end
+    
+    subgraph Mock["🧪 Mock Providers"]
+        M_ADSB["Mock ADS-B<br/>20 aircraft"]
+        M_TLE["Mock TLE<br/>10 satellites"]
+        M_CAM["Mock Cameras"]
+    end
+    
+    subgraph Real["🌍 Real Providers"]
+        R_ADSB["OpenSky"]
+        R_TLE["CelesTrak"]
+        R_SEIS["USGS Seismic"]
+        R_WX["NWS Weather"]
+        R_RADAR["NEXRAD"]
+    end
+    
+    ENV_OFF -->|All mock| M_ADSB
+    ENV_OFF --> M_TLE
+    ENV_OFF --> M_CAM
+    
+    ENV_ON -->|Optional flags| R_ADSB
+    ENV_ON --> R_TLE
+    ENV_ON --> R_SEIS
+    ENV_ON --> R_WX
+    ENV_ON --> R_RADAR
+    ENV_ON --> M_CAM
+```
+
+---
+
 ## Retention Policy (Default)
+
+```mermaid
+graph LR
+    subgraph Tiers["📊 Data Retention Tiers"]
+        HOT["🔥 Hot State<br/>Redis<br/>1 hour<br/>Active interpolation"]
+        OP["📋 Operational<br/>PostgreSQL<br/>30 days<br/>History & trends"]
+        AUDIT["🔒 Audit<br/>PostgreSQL<br/>1 year<br/>Action logs"]
+        COLD["❄️ Cold Storage<br/>S3/MinIO<br/>7 years<br/>Compliance"]
+    end
+    
+    DATA["📡 Incoming Data"] --> HOT
+    HOT --> OP
+    OP --> AUDIT
+    OP --> COLD
+    
+    style HOT fill:#ffebee
+    style OP fill:#fff3e0
+    style AUDIT fill:#e8f5e9
+    style COLD fill:#e3f2fd
+```
 
 | Tier | Duration | Purpose |
 |------|----------|---------|
@@ -110,6 +227,68 @@
 
 ## Circuit Breaker Thresholds
 
+```mermaid
+stateDiagram-v2
+    [*] --> Closed: Initial State
+    
+    Closed --> Open: Error Rate > 50%
+    Closed --> Open: P99 Latency > 5000ms
+    
+    Open --> HalfOpen: 30s Timeout
+    
+    HalfOpen --> Closed: Success
+    HalfOpen --> Open: Failure
+    
+    note right of Closed
+        Normal Operation
+        Requests forwarded
+        to provider
+    end note
+    
+    note left of Open
+        Circuit Tripped
+        Returns fallback
+        or cached data
+    end note
+    
+    note right of HalfOpen
+        Testing Recovery
+        Single probe
+        request allowed
+    end note
+```
+
 - **Error Rate:** > 50% failures over 10 seconds.
 - **Latency:** > 5000ms P99.
 - **Reset Timeout:** 30 seconds (Half-Open state).
+
+---
+
+## Provider Compliance Checklist
+
+```mermaid
+graph TD
+    subgraph Compliance["✅ Compliance Requirements"]
+        TOS["Terms of Service<br/>Review"]
+        RATE["Rate Limiting<br/>Configuration"]
+        PRIVACY["Privacy Filters<br/>(Cameras)"]
+        ATTRIB["Attribution<br/>Requirements"]
+        RETENTION["Data Retention<br/>Policy"]
+    end
+    
+    ADSB["ADS-B/OpenSky"]
+    TLE["TLE/CelesTrak"]
+    SEIS["USGS Seismic"]
+    WX["NWS Weather"]
+    CAM["Cameras"]
+    
+    ADSB --> TOS
+    ADSB --> RATE
+    TLE --> TOS
+    TLE --> RATE
+    SEIS --> ATTRIB
+    WX --> ATTRIB
+    WX --> RATE
+    CAM --> PRIVACY
+    CAM --> RETENTION
+```

@@ -355,9 +355,7 @@ async fn handle_link(payload: String, subscription_manager: &Arc<SubscriptionMan
             let envelope = Envelope {
                 schema_version: "1.0.0".to_string(),
                 server_ts_ms: now_ms(),
-                payload: Some(harpy_proto::harpy::v1::envelope::Payload::LinkUpsert(
-                    link,
-                )),
+                payload: Some(harpy_proto::harpy::v1::envelope::Payload::LinkUpsert(link)),
             };
             subscription_manager.broadcast_to_all(envelope).await;
         }

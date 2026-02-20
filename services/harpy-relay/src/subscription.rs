@@ -4,6 +4,7 @@
 //! and handles fanout of messages to connected clients.
 
 use harpy_proto::harpy::v1::{BoundingBox, Envelope, LayerType, TrackDelta, TrackDeltaBatch};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -12,6 +13,29 @@ use crate::backpressure::BackpressureChannel;
 
 /// Unique client ID
 pub type ClientId = String;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BackpressureDebugStats {
+    pub track_batches_dropped: usize,
+    pub track_batches_sent: usize,
+    pub high_priority_sent: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SubscriptionDebugInfo {
+    pub client_id: String,
+    pub viewport: ViewportDebug,
+    pub layers: Vec<String>,
+    pub backpressure: BackpressureDebugStats,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ViewportDebug {
+    pub min_lat: f64,
+    pub min_lon: f64,
+    pub max_lat: f64,
+    pub max_lon: f64,
+}
 
 /// Client subscription state
 #[derive(Debug, Clone)]
@@ -92,6 +116,32 @@ impl SubscriptionManager {
         self.subscriptions.read().await.len()
     }
 
+    /// Return a snapshot of active subscriptions for debug endpoints.
+    pub async fn debug_subscriptions(&self) -> Vec<SubscriptionDebugInfo> {
+        let subs = self.subscriptions.read().await;
+
+        subs.iter()
+            .map(|(client_id, subscription)| {
+                let stats = subscription.sender.stats();
+                SubscriptionDebugInfo {
+                    client_id: client_id.clone(),
+                    viewport: ViewportDebug {
+                        min_lat: subscription.viewport.min_lat,
+                        min_lon: subscription.viewport.min_lon,
+                        max_lat: subscription.viewport.max_lat,
+                        max_lon: subscription.viewport.max_lon,
+                    },
+                    layers: subscription.layers.iter().map(layer_type_name).collect(),
+                    backpressure: BackpressureDebugStats {
+                        track_batches_dropped: stats.track_batches_dropped,
+                        track_batches_sent: stats.track_batches_sent,
+                        high_priority_sent: stats.high_priority_sent,
+                    },
+                }
+            })
+            .collect()
+    }
+
     /// Broadcast track batch to all matching subscriptions
     pub async fn broadcast_tracks(&self, tracks: Vec<TrackDelta>) {
         if tracks.is_empty() {
@@ -151,6 +201,20 @@ impl SubscriptionManager {
             }
         }
     }
+}
+
+fn layer_type_name(layer: &LayerType) -> String {
+    match layer {
+        LayerType::Unspecified => "UNSPECIFIED",
+        LayerType::Aircraft => "AIRCRAFT",
+        LayerType::Satellite => "SATELLITE",
+        LayerType::Ground => "GROUND",
+        LayerType::Vessel => "VESSEL",
+        LayerType::Camera => "CAMERA",
+        LayerType::Detection => "DETECTION",
+        LayerType::Alert => "ALERT",
+    }
+    .to_string()
 }
 
 /// Get current timestamp in milliseconds

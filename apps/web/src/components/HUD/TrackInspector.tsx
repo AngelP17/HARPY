@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Crosshair, X } from "lucide-react";
+import { Crosshair, LocateFixed, X } from "lucide-react";
 import { clsx } from "clsx";
 import styles from "./HUD.module.css";
 import { useStore } from "@/store/useStore";
@@ -24,6 +24,7 @@ const kindToLabel = (kind: number): string => {
 const TrackInspector: React.FC = () => {
   const selectedTrack = useStore((state) => state.selectedTrack);
   const setSelectedTrack = useStore((state) => state.setSelectedTrack);
+  const setFocusTrackId = useStore((state) => state.setFocusTrackId);
 
   return (
     <div className={clsx("hud-panel", styles.trackInspectorPanel)}>
@@ -35,14 +36,25 @@ const TrackInspector: React.FC = () => {
         <div className={styles.trackInspectorBody}>
           <div className={styles.trackInspectorHead}>
             <span className={styles.trackInspectorId}>{selectedTrack.id}</span>
-            <button
-              type="button"
-              className={styles.trackInspectorClose}
-              onClick={() => setSelectedTrack(null)}
-              aria-label="Clear selected track"
-            >
-              <X size={10} />
-            </button>
+            <div className={styles.trackInspectorActions}>
+              <button
+                type="button"
+                className={styles.trackInspectorAction}
+                onClick={() => setFocusTrackId(selectedTrack.id)}
+                aria-label="Focus selected track"
+              >
+                <LocateFixed size={10} />
+                <span>FOCUS</span>
+              </button>
+              <button
+                type="button"
+                className={styles.trackInspectorClose}
+                onClick={() => setSelectedTrack(null)}
+                aria-label="Clear selected track"
+              >
+                <X size={10} />
+              </button>
+            </div>
           </div>
           <div className={styles.trackInspectorGrid}>
             <span>TYPE</span>

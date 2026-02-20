@@ -14,22 +14,21 @@ use dashmap::DashMap;
 use h3o::{LatLng, Resolution};
 use harpy_core::types::HealthResponse;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use uuid::Uuid;
 
-mod rules;
-mod redis_publisher;
 mod redis_consumer;
+mod redis_publisher;
+mod rules;
 
-use rules::{RuleEngine, RuleResult};
-use redis_publisher::RedisPublisher;
 use redis_consumer::RedisConsumer;
+use redis_publisher::RedisPublisher;
+use rules::{RuleEngine, RuleResult};
 
 #[derive(Clone)]
 struct AppState {
@@ -53,11 +52,14 @@ struct TrackObservation {
     lat: f64,
     lon: f64,
     alt: f64,
+    #[allow(dead_code)]
     heading: Option<f64>,
     speed: Option<f64>,
+    #[allow(dead_code)]
     ts_ms: i64,
     provider_id: String,
     #[serde(default)]
+    #[allow(dead_code)]
     meta: Value,
 }
 
@@ -198,13 +200,16 @@ async fn main() -> anyhow::Result<()> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "harpy-fusion listening");
-    tracing::info!("Rules engine initialized with H3 resolution {}", h3_resolution);
+    tracing::info!(
+        "Rules engine initialized with H3 resolution {}",
+        h3_resolution
+    );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    
+
     // Start Redis consumer for automatic track processing
     tokio::spawn(async move {
-        if let Some(redis_url) = std::env::var("REDIS_URL").ok() {
+        if let Ok(redis_url) = std::env::var("REDIS_URL") {
             match RedisConsumer::new(&redis_url, consumer_state, consumer_rule_engine).await {
                 Ok(consumer) => {
                     if let Err(e) = consumer.run().await {
@@ -217,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     });
-    
+
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -280,33 +285,37 @@ async fn fusion_ingest(
     let mut rules_triggered: HashSet<String> = HashSet::new();
 
     // Run all rules against the tracks
-    let rule_results = state.rule_engine.evaluate(&req.tracks, &cell_buckets, now_ms).await;
+    let rule_results = state
+        .rule_engine
+        .evaluate(&req.tracks, &cell_buckets, now_ms)
+        .await;
 
     for result in rule_results {
-        match result {
-            RuleResult::Alert { alert, links } => {
-                // Check deduplication
-                let dedup_key = format!("{}:{}", alert.title, alert.description);
-                let should_skip = if let Some(last_seen) = state.dedup_cache.get(&dedup_key) {
-                    now_ms - *last_seen < state.dedup_ttl_ms
-                } else {
-                    false
-                };
+        let RuleResult::Alert { alert, links } = result;
+        // Check deduplication
+        let dedup_key = format!("{}:{}", alert.title, alert.description);
+        let should_skip = if let Some(last_seen) = state.dedup_cache.get(&dedup_key) {
+            now_ms - *last_seen < state.dedup_ttl_ms
+        } else {
+            false
+        };
 
-                if should_skip {
-                    continue;
-                }
-                state.dedup_cache.insert(dedup_key, now_ms);
-
-                rules_triggered.insert(alert.meta.get("rule").and_then(|v| v.as_str()).unwrap_or("unknown").to_string());
-
-                all_alerts.push(alert);
-                all_links.extend(links);
-            }
-            RuleResult::Link(link) => {
-                all_links.push(link);
-            }
+        if should_skip {
+            continue;
         }
+        state.dedup_cache.insert(dedup_key, now_ms);
+
+        rules_triggered.insert(
+            alert
+                .meta
+                .get("rule")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+        );
+
+        all_alerts.push(alert);
+        all_links.extend(links);
     }
 
     // Publish alerts to Redis for relay fanout
@@ -436,14 +445,6 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .expect("system clock drift")
         .as_millis() as i64
-}
-
-fn internal_error(error: anyhow::Error) -> (StatusCode, String) {
-    tracing::error!(error = %error, "fusion request failed");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "internal server error".to_string(),
-    )
 }
 
 impl IntoResponse for FusionIngestResponse {

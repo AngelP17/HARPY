@@ -50,6 +50,45 @@ interface DecodedAlertUpsertMessage {
   };
 }
 
+interface DecodedTrackBatchStatsMessage {
+  type: "TRACK_BATCH_STATS";
+  count: number;
+}
+
+interface DecodedSubscriptionAckMessage {
+  type: "SUBSCRIPTION_ACK";
+}
+
+interface DecodedLinkUpsertMessage {
+  type: "LINK_UPSERT";
+  link: {
+    id: string;
+    fromType: string;
+    fromId: string;
+    rel: string;
+    toType: string;
+    toId: string;
+    tsMs: number;
+  };
+}
+
+interface RelayDebugSnapshotResponse {
+  relay?: {
+    connected_clients?: number;
+    playback_clients?: number;
+    backpressure_totals?: {
+      track_batches_dropped?: number;
+      track_batches_sent?: number;
+      high_priority_sent?: number;
+    };
+  };
+  redis?: {
+    providers?: Array<{
+      freshness?: string;
+    }>;
+  };
+}
+
 type StreamMode = "online" | "offline" | "hybrid";
 
 const resolveStreamMode = (): StreamMode => {
@@ -58,6 +97,20 @@ const resolveStreamMode = (): StreamMode => {
     return raw;
   }
   return "hybrid";
+};
+
+const resolveRelayHttpBase = (wsUrl: string): string => {
+  const envBase = process.env.NEXT_PUBLIC_RELAY_HTTP_URL;
+  if (envBase) {
+    return envBase;
+  }
+  if (wsUrl.startsWith("ws://")) {
+    return wsUrl.replace("ws://", "http://").replace(/\/ws$/, "");
+  }
+  if (wsUrl.startsWith("wss://")) {
+    return wsUrl.replace("wss://", "https://").replace(/\/ws$/, "");
+  }
+  return "http://localhost:8080";
 };
 
 const isProviderStatusMessage = (data: unknown): data is DecodedProviderStatusMessage => {
@@ -74,6 +127,30 @@ const isAlertUpsertMessage = (data: unknown): data is DecodedAlertUpsertMessage 
   }
   const message = data as { type?: string; alert?: unknown };
   return message.type === "ALERT_UPSERT" && typeof message.alert === "object" && message.alert !== null;
+};
+
+const isTrackBatchStatsMessage = (data: unknown): data is DecodedTrackBatchStatsMessage => {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const message = data as { type?: string; count?: unknown };
+  return message.type === "TRACK_BATCH_STATS" && typeof message.count === "number";
+};
+
+const isSubscriptionAckMessage = (data: unknown): data is DecodedSubscriptionAckMessage => {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const message = data as { type?: string };
+  return message.type === "SUBSCRIPTION_ACK";
+};
+
+const isLinkUpsertMessage = (data: unknown): data is DecodedLinkUpsertMessage => {
+  if (typeof data !== "object" || data === null) {
+    return false;
+  }
+  const message = data as { type?: string; link?: unknown };
+  return message.type === "LINK_UPSERT" && typeof message.link === "object" && message.link !== null;
 };
 
 const mapUiLayersToProto = (activeLayers: string[]): harpy.v1.LayerType[] => {
@@ -97,6 +174,24 @@ const mapUiLayersToProto = (activeLayers: string[]): harpy.v1.LayerType[] => {
   return Array.from(mapped);
 };
 
+const mapUiLayersToTrackKinds = (activeLayers: string[]): number[] => {
+  const kinds = new Set<number>();
+  for (const layer of activeLayers) {
+    if (layer === "ADSB") {
+      kinds.add(harpy.v1.TrackKind.TRACK_KIND_AIRCRAFT);
+    } else if (layer === "TLE_SAT") {
+      kinds.add(harpy.v1.TrackKind.TRACK_KIND_SATELLITE);
+    } else if (layer === "SENS_CV" || layer === "WX_RADAR") {
+      kinds.add(harpy.v1.TrackKind.TRACK_KIND_GROUND);
+    }
+  }
+  if (kinds.size === 0) {
+    kinds.add(harpy.v1.TrackKind.TRACK_KIND_AIRCRAFT);
+    kinds.add(harpy.v1.TrackKind.TRACK_KIND_SATELLITE);
+  }
+  return Array.from(kinds);
+};
+
 const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewerInstance = useRef<Cesium.Viewer | null>(null);
@@ -105,8 +200,18 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const visionMode = useStore((state) => state.visionMode);
   const setConnectionStatus = useStore((state) => state.setConnectionStatus);
   const updateProviderStatus = useStore((state) => state.updateProviderStatus);
+  const setWsRttMs = useStore((state) => state.setWsRttMs);
+  const setThroughputStats = useStore((state) => state.setThroughputStats);
+  const setAlertsPerSec = useStore((state) => state.setAlertsPerSec);
+  const setLastMessageTsMs = useStore((state) => state.setLastMessageTsMs);
+  const setRenderedTrackStats = useStore((state) => state.setRenderedTrackStats);
+  const setRelayDebugStats = useStore((state) => state.setRelayDebugStats);
+  const upsertLink = useStore((state) => state.upsertLink);
+  const setCameraPose = useStore((state) => state.setCameraPose);
   const addAlert = useStore((state) => state.addAlert);
   const setSelectedTrack = useStore((state) => state.setSelectedTrack);
+  const focusTrackId = useStore((state) => state.focusTrackId);
+  const setFocusTrackId = useStore((state) => state.setFocusTrackId);
   const layers = useStore((state) => state.layers);
   const isLive = useStore((state) => state.isLive);
   const isPlaying = useStore((state) => state.isPlaying);
@@ -114,6 +219,10 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const layersRef = useRef<string[]>(layers);
   const isLiveRef = useRef<boolean>(isLive);
   const currentTimeRef = useRef<number>(currentTimeMs);
+  const isLivePlaybackAllowedRef = useRef<boolean>(isLive || isPlaying);
+  const lastSubscriptionSentAtRef = useRef<number>(0);
+  const throughputWindowRef = useRef<Array<{ ts: number; count: number }>>([]);
+  const alertWindowRef = useRef<number[]>([]);
   
   // Workers
   const wsDecodeWorker = useRef<Worker | null>(null);
@@ -138,6 +247,10 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   useEffect(() => {
     currentTimeRef.current = currentTimeMs;
   }, [currentTimeMs]);
+
+  useEffect(() => {
+    isLivePlaybackAllowedRef.current = isLive || isPlaying;
+  }, [isLive, isPlaying]);
 
   const sendSubscription = (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
     const mappedLayers = mapUiLayersToProto(activeLayers);
@@ -164,6 +277,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       subscriptionRequest: request
     });
     const buffer = harpy.v1.Envelope.encode(envelope).finish();
+    lastSubscriptionSentAtRef.current = Date.now();
     socket.send(buffer);
     console.log(
       "[WS] Sent SubscriptionRequest:",
@@ -185,6 +299,13 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     if (!collection) return;
 
     const nextTrackLookup = new Map<string, SelectedTrack>();
+    const kindCounts: Record<string, number> = {
+      AIRCRAFT: 0,
+      SATELLITE: 0,
+      GROUND: 0,
+      VESSEL: 0,
+      UNKNOWN: 0,
+    };
     collection.removeAll();
     for (let i = 0; i < count; i++) {
       const lat = posArray[i * 3];
@@ -196,6 +317,17 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       }
       const providerId = providerIds[i] ?? "unknown";
       const kind = kindArray[i] ?? 0;
+      if (kind === 1) {
+        kindCounts.AIRCRAFT += 1;
+      } else if (kind === 2) {
+        kindCounts.SATELLITE += 1;
+      } else if (kind === 3) {
+        kindCounts.GROUND += 1;
+      } else if (kind === 4) {
+        kindCounts.VESSEL += 1;
+      } else {
+        kindCounts.UNKNOWN += 1;
+      }
       const heading = headingArray[i] ?? 0;
       const speed = speedArray[i] ?? 0;
 
@@ -223,11 +355,12 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     }
 
     trackLookup.current = nextTrackLookup;
+    setRenderedTrackStats(nextTrackLookup.size, kindCounts);
     const selectedTrack = useStore.getState().selectedTrack;
     if (selectedTrack && !nextTrackLookup.has(selectedTrack.id)) {
       setSelectedTrack(null);
     }
-  }, [setSelectedTrack]);
+  }, [setRenderedTrackStats, setSelectedTrack]);
 
   useEffect(() => {
     if (!viewerRef.current || viewerInstance.current) return;
@@ -268,6 +401,17 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     // Initialize Viewer
     const viewer = new Cesium.Viewer(viewerRef.current, viewerOptions);
     viewerInstance.current = viewer;
+    const initialPose = useStore.getState().cameraPose;
+    if (initialPose) {
+      viewer.camera.setView({
+        destination: Cesium.Cartesian3.fromDegrees(initialPose.lon, initialPose.lat, initialPose.alt),
+        orientation: {
+          heading: initialPose.heading,
+          pitch: initialPose.pitch,
+          roll: initialPose.roll,
+        },
+      });
+    }
 
     let disposed = false;
     if (forceOfflineMap) {
@@ -292,6 +436,18 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     }
 
     const scene = viewer.scene;
+    const controller = scene.screenSpaceCameraController;
+    controller.enableCollisionDetection = false;
+    controller.enableLook = true;
+    controller.enableRotate = true;
+    controller.enableTranslate = true;
+    controller.enableTilt = true;
+    controller.enableZoom = true;
+    controller.inertiaTranslate = 0.75;
+    controller.inertiaSpin = 0.75;
+    controller.inertiaZoom = 0.55;
+    controller.minimumZoomDistance = 10;
+    controller.maximumZoomDistance = 80_000_000;
     scene.backgroundColor = Cesium.Color.BLACK;
     scene.globe.baseColor = Cesium.Color.BLACK;
 
@@ -326,11 +482,34 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     // Connect Pipeline: wsDecode -> trackIndex -> pack -> main
     wsDecodeWorker.current.onmessage = (e: MessageEvent<unknown>) => {
+      setLastMessageTsMs(Date.now());
       if (isProviderStatusMessage(e.data)) {
         updateProviderStatus(e.data.status);
       } else if (isAlertUpsertMessage(e.data)) {
         addAlert(e.data.alert);
+        const now = Date.now();
+        alertWindowRef.current.push(now);
+        alertWindowRef.current = alertWindowRef.current.filter((ts) => now - ts <= 5000);
+        setAlertsPerSec(alertWindowRef.current.length / 5);
+      } else if (isTrackBatchStatsMessage(e.data)) {
+        if (!isLivePlaybackAllowedRef.current && mockOnlyMode) {
+          return;
+        }
+        const now = Date.now();
+        throughputWindowRef.current.push({ ts: now, count: e.data.count });
+        throughputWindowRef.current = throughputWindowRef.current.filter((entry) => now - entry.ts <= 5000);
+        const total = throughputWindowRef.current.reduce((sum, entry) => sum + entry.count, 0);
+        setThroughputStats(total / 5, e.data.count);
+      } else if (isSubscriptionAckMessage(e.data)) {
+        if (lastSubscriptionSentAtRef.current > 0) {
+          setWsRttMs(Date.now() - lastSubscriptionSentAtRef.current);
+        }
+      } else if (isLinkUpsertMessage(e.data)) {
+        upsertLink(e.data.link);
       } else {
+        if (!isLivePlaybackAllowedRef.current && mockOnlyMode) {
+          return;
+        }
         trackIndexWorker.current?.postMessage(e.data);
       }
     };
@@ -340,9 +519,40 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         updatePrimitives(e.data);
       }
     };
+    trackIndexWorker.current.postMessage({
+      type: "SET_ACTIVE_KINDS",
+      kinds: mapUiLayersToTrackKinds(layersRef.current),
+    });
+
+    let lastLodPush = 0;
+    let lastCameraPosePush = 0;
+    const postRenderListener = () => {
+      const now = performance.now();
+      if (now - lastLodPush < 350) {
+        // continue to camera pose update
+      } else {
+        lastLodPush = now;
+        const height = viewer.camera.positionCartographic.height;
+        trackIndexWorker.current?.postMessage({ type: "SET_CAMERA_LOD", cameraHeightM: height });
+      }
+      if (now - lastCameraPosePush >= 700) {
+        lastCameraPosePush = now;
+        const cartographic = viewer.camera.positionCartographic;
+        setCameraPose({
+          lat: Cesium.Math.toDegrees(cartographic.latitude),
+          lon: Cesium.Math.toDegrees(cartographic.longitude),
+          alt: cartographic.height,
+          heading: viewer.camera.heading,
+          pitch: viewer.camera.pitch,
+          roll: viewer.camera.roll,
+        });
+      }
+    };
+    scene.postRender.addEventListener(postRenderListener);
 
     // Setup Real WebSocket
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
+    const relayHttpBase = resolveRelayHttpBase(wsUrl);
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let connectAttempt = 0;
 
@@ -417,6 +627,38 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       : null;
     streamer?.start();
 
+    let debugPollTimer: ReturnType<typeof setInterval> | null = null;
+    if (useWebSocket) {
+      debugPollTimer = setInterval(async () => {
+        try {
+          const response = await fetch(`${relayHttpBase}/api/debug/snapshot`, {
+            method: "GET",
+            cache: "no-store",
+          });
+          if (!response.ok) {
+            return;
+          }
+          const body = (await response.json()) as RelayDebugSnapshotResponse;
+          const providers = body.redis?.providers ?? [];
+          const freshnessCounts = providers.reduce<Record<string, number>>((acc, provider) => {
+            const key = provider.freshness ?? "UNKNOWN";
+            acc[key] = (acc[key] ?? 0) + 1;
+            return acc;
+          }, {});
+          setRelayDebugStats({
+            dropped: body.relay?.backpressure_totals?.track_batches_dropped ?? 0,
+            sent: body.relay?.backpressure_totals?.track_batches_sent ?? 0,
+            highPriority: body.relay?.backpressure_totals?.high_priority_sent ?? 0,
+            connectedClients: body.relay?.connected_clients ?? 0,
+            playbackClients: body.relay?.playback_clients ?? 0,
+            providerFreshnessCounts: freshnessCounts,
+          });
+        } catch {
+          // Ignore debug polling errors.
+        }
+      }, 5000);
+    }
+
     setupPostProcessing(scene);
     
     return () => {
@@ -425,11 +667,15 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
       }
+      if (debugPollTimer) {
+        clearInterval(debugPollTimer);
+      }
       if (socketRef.current) {
         socketRef.current.onclose = null;
         socketRef.current.close();
       }
       pickHandler.destroy();
+      scene.postRender.removeEventListener(postRenderListener);
       if (viewerInstance.current) {
         viewerInstance.current.destroy();
         viewerInstance.current = null;
@@ -443,7 +689,15 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     ionToken,
     mockOnlyMode,
     setConnectionStatus,
+    setAlertsPerSec,
+    setCameraPose,
+    setLastMessageTsMs,
+    setRelayDebugStats,
+    setRenderedTrackStats,
+    setThroughputStats,
+    setWsRttMs,
     updatePrimitives,
+    upsertLink,
     setSelectedTrack,
     updateProviderStatus,
     useMockStreamer,
@@ -452,6 +706,10 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
   // Handle layer subscriptions
   useEffect(() => {
+    trackIndexWorker.current?.postMessage({
+      type: "SET_ACTIVE_KINDS",
+      kinds: mapUiLayersToTrackKinds(layers),
+    });
     if (!useWebSocket) {
       return;
     }
@@ -477,6 +735,20 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     if (!viewerInstance.current) return;
     updateVisionMode(viewerInstance.current.scene, visionMode);
   }, [visionMode]);
+
+  useEffect(() => {
+    if (!focusTrackId || !viewerInstance.current) {
+      return;
+    }
+    const track = trackLookup.current.get(focusTrackId);
+    if (track) {
+      viewerInstance.current.camera.flyTo({
+        destination: Cesium.Cartesian3.fromDegrees(track.lon, track.lat, Math.max(track.alt + 25000, 40000)),
+        duration: 1.1,
+      });
+    }
+    setFocusTrackId(null);
+  }, [focusTrackId, setFocusTrackId]);
 
   return <div ref={viewerRef} className="cesium-viewer" />;
 };

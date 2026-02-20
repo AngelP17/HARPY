@@ -15,6 +15,8 @@ const URLManager: React.FC = () => {
   const setPlaybackRate = useStore((state) => state.setPlaybackRate);
   const currentTimeMs = useStore((state) => state.currentTimeMs);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
+  const cameraPose = useStore((state) => state.cameraPose);
+  const setCameraPose = useStore((state) => state.setCameraPose);
 
   // Load state from URL on mount
   useEffect(() => {
@@ -51,12 +53,29 @@ const URLManager: React.FC = () => {
 
       const time = params.get("t");
       if (time) setCurrentTimeMs(Number(time));
+
+      const clat = params.get("clat");
+      const clon = params.get("clon");
+      const calt = params.get("calt");
+      const chead = params.get("chead");
+      const cpitch = params.get("cpitch");
+      const croll = params.get("croll");
+      if (clat && clon && calt && chead && cpitch && croll) {
+        setCameraPose({
+          lat: Number(clat),
+          lon: Number(clon),
+          alt: Number(calt),
+          heading: Number(chead),
+          pitch: Number(cpitch),
+          roll: Number(croll),
+        });
+      }
       
       console.log("[URL] Restored state from hash");
     } catch (e) {
       console.error("[URL] Failed to parse hash", e);
     }
-  }, [setCurrentTimeMs, setIsLive, setIsPlaying, setPlaybackRate, setVisionMode]);
+  }, [setCameraPose, setCurrentTimeMs, setIsLive, setIsPlaying, setPlaybackRate, setVisionMode]);
 
   // Sync state to URL
   useEffect(() => {
@@ -74,11 +93,20 @@ const URLManager: React.FC = () => {
       params.set("t", Math.floor(currentTimeMs).toString());
     }
 
+    if (cameraPose) {
+      params.set("clat", cameraPose.lat.toFixed(6));
+      params.set("clon", cameraPose.lon.toFixed(6));
+      params.set("calt", Math.round(cameraPose.alt).toString());
+      params.set("chead", cameraPose.heading.toFixed(4));
+      params.set("cpitch", cameraPose.pitch.toFixed(4));
+      params.set("croll", cameraPose.roll.toFixed(4));
+    }
+
     const newHash = `#${params.toString()}`;
     if (window.location.hash !== newHash) {
       window.history.replaceState(null, "", newHash);
     }
-  }, [visionMode, layers, isLive, isPlaying, playbackRate, currentTimeMs]);
+  }, [visionMode, layers, isLive, isPlaying, playbackRate, currentTimeMs, cameraPose]);
 
   return null;
 };

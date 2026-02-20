@@ -14,7 +14,9 @@ workerCtx.onmessage = (event: MessageEvent) => {
       
       // Dispatch based on payload
       if (envelope.trackDeltaBatch) {
-        workerCtx.postMessage({ type: "TRACK_DELTA_BATCH", deltas: envelope.trackDeltaBatch.deltas });
+        const deltas = envelope.trackDeltaBatch.deltas || [];
+        workerCtx.postMessage({ type: "TRACK_DELTA_BATCH", deltas });
+        workerCtx.postMessage({ type: "TRACK_BATCH_STATS", count: deltas.length, serverTsMs: Number(envelope.serverTsMs ?? 0) });
       } else if (envelope.alertUpsert) {
         const severityName = harpy.v1.AlertSeverity[envelope.alertUpsert.severity ?? 0] ?? "ALERT_SEVERITY_UNSPECIFIED";
         // Map alert to plain object
@@ -41,6 +43,28 @@ workerCtx.onmessage = (event: MessageEvent) => {
             freshness: freshnessName,
             latencyMs
           } 
+        });
+      } else if (envelope.subscriptionAck) {
+        workerCtx.postMessage({
+          type: "SUBSCRIPTION_ACK",
+          ack: {
+            subscriptionId: envelope.subscriptionAck.subscriptionId,
+            success: envelope.subscriptionAck.success,
+            error: envelope.subscriptionAck.error,
+          },
+        });
+      } else if (envelope.linkUpsert) {
+        workerCtx.postMessage({
+          type: "LINK_UPSERT",
+          link: {
+            id: envelope.linkUpsert.id,
+            fromType: harpy.v1.NodeType[envelope.linkUpsert.from?.nodeType ?? 0] ?? "NODE_TYPE_UNSPECIFIED",
+            fromId: envelope.linkUpsert.from?.nodeId ?? "",
+            rel: envelope.linkUpsert.rel ?? "",
+            toType: harpy.v1.NodeType[envelope.linkUpsert.to?.nodeType ?? 0] ?? "NODE_TYPE_UNSPECIFIED",
+            toId: envelope.linkUpsert.to?.nodeId ?? "",
+            tsMs: Number(envelope.linkUpsert.tsMs ?? 0),
+          },
         });
       }
     } catch (err) {

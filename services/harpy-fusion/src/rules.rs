@@ -19,7 +19,6 @@ pub enum RuleResult {
         alert: AlertUpsertRecord,
         links: Vec<LinkUpsertRecord>,
     },
-    Link(LinkUpsertRecord),
 }
 
 /// Rule engine managing all fusion rules
@@ -81,7 +80,10 @@ impl RuleEngine {
         let mut results = Vec::new();
 
         // Run H3 convergence rule
-        results.extend(self.convergence_rule.evaluate(cell_buckets, now_ms, self.h3_resolution));
+        results.extend(
+            self.convergence_rule
+                .evaluate(cell_buckets, now_ms, self.h3_resolution),
+        );
 
         // Run proximity rule
         results.extend(self.proximity_rule.evaluate(tracks, now_ms));
@@ -94,11 +96,10 @@ impl RuleEngine {
 
         // Update trigger counts
         for result in &results {
-            if let RuleResult::Alert { alert, .. } = result {
-                if let Some(rule_name) = alert.meta.get("rule").and_then(|v| v.as_str()) {
-                    if let Some(counter) = self.trigger_counts.get(rule_name) {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                    }
+            let RuleResult::Alert { alert, .. } = result;
+            if let Some(rule_name) = alert.meta.get("rule").and_then(|v| v.as_str()) {
+                if let Some(counter) = self.trigger_counts.get(rule_name) {
+                    counter.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
@@ -226,10 +227,7 @@ impl ProximityRule {
                 let first = &tracks[i];
                 let second = &tracks[j];
 
-                let distance = haversine_distance(
-                    first.lat, first.lon,
-                    second.lat, second.lon,
-                );
+                let distance = haversine_distance(first.lat, first.lon, second.lat, second.lon);
 
                 if distance <= self.threshold_meters {
                     let link_id = Uuid::new_v4().to_string();
@@ -252,7 +250,12 @@ impl ProximityRule {
 
                     let alert = AlertUpsertRecord {
                         id: alert_id.clone(),
-                        severity: if distance < 1000.0 { "CRITICAL" } else { "WARNING" }.to_string(),
+                        severity: if distance < 1000.0 {
+                            "CRITICAL"
+                        } else {
+                            "WARNING"
+                        }
+                        .to_string(),
                         title: "Proximity Alert".to_string(),
                         description: format!(
                             "Tracks {} and {} are {:.0}m apart (threshold: {:.0}m)",
@@ -293,7 +296,7 @@ impl ProximityRule {
 
 /// Anomaly Rule: Detects speed/altitude deviations
 struct AnomalyRule {
-    speed_change_threshold: f64,  // Percentage
+    speed_change_threshold: f64,    // Percentage
     altitude_change_threshold: f64, // Meters
 }
 
@@ -307,11 +310,13 @@ impl AnomalyRule {
 
     fn evaluate(&self, tracks: &[TrackObservation], now_ms: i64) -> Vec<RuleResult> {
         let mut results = Vec::new();
+        let speed_threshold_mps = 200.0 * (1.0 + (self.speed_change_threshold / 100.0));
+        let altitude_threshold_meters = self.altitude_change_threshold;
 
         for track in tracks {
             // Check for anomalous speed
             if let Some(speed) = track.speed {
-                if speed > 300.0 { // > 300 m/s (~Mach 0.9) is unusual for civilian
+                if speed > speed_threshold_mps {
                     let alert_id = Uuid::new_v4().to_string();
 
                     let alert = AlertUpsertRecord {
@@ -320,7 +325,9 @@ impl AnomalyRule {
                         title: "Speed Anomaly".to_string(),
                         description: format!(
                             "Track {} has unusual speed: {:.0} m/s ({:.0} knots)",
-                            track.id, speed, speed * 1.94384
+                            track.id,
+                            speed,
+                            speed * 1.94384
                         ),
                         ts_ms: now_ms,
                         status: "ACTIVE".to_string(),
@@ -329,7 +336,7 @@ impl AnomalyRule {
                             "rule": "anomaly_speed",
                             "speed_mps": speed,
                             "speed_knots": speed * 1.94384,
-                            "threshold_mps": 300.0,
+                            "threshold_mps": speed_threshold_mps,
                         }),
                     };
 
@@ -341,7 +348,7 @@ impl AnomalyRule {
             }
 
             // Check for anomalous altitude
-            if track.alt > 20000.0 { // > 20km is unusual
+            if track.alt > altitude_threshold_meters {
                 let alert_id = Uuid::new_v4().to_string();
 
                 let alert = AlertUpsertRecord {
@@ -350,7 +357,9 @@ impl AnomalyRule {
                     title: "Altitude Anomaly".to_string(),
                     description: format!(
                         "Track {} at unusual altitude: {:.0}m ({:.0}ft)",
-                        track.id, track.alt, track.alt * 3.28084
+                        track.id,
+                        track.alt,
+                        track.alt * 3.28084
                     ),
                     ts_ms: now_ms,
                     status: "ACTIVE".to_string(),
@@ -359,7 +368,7 @@ impl AnomalyRule {
                         "rule": "anomaly_altitude",
                         "altitude_meters": track.alt,
                         "altitude_feet": track.alt * 3.28084,
-                        "threshold_meters": 20000.0,
+                        "threshold_meters": altitude_threshold_meters,
                     }),
                 };
 
@@ -392,6 +401,9 @@ impl LoiteringRule {
         // Loitering detection requires historical track data
         // This is a simplified version - full implementation would query track history
         // and analyze the path geometry for circular patterns
+        if self.min_duration_seconds <= 0.0 || self.min_circularity <= 0.0 {
+            return Vec::new();
+        }
         Vec::new()
     }
 }

@@ -3,7 +3,9 @@
 //! Consumes tracks from Redis pub/sub and processes them through the fusion engine.
 
 use crate::rules::RuleEngine;
-use crate::{persist_fusion_outputs, AlertUpsertRecord, AppState, LinkUpsertRecord, TrackObservation};
+use crate::{
+    persist_fusion_outputs, AlertUpsertRecord, AppState, LinkUpsertRecord, TrackObservation,
+};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -31,7 +33,6 @@ struct PositionJson {
 }
 
 pub struct RedisConsumer {
-    client: redis::aio::ConnectionManager,
     state: AppState,
     rule_engine: Arc<RuleEngine>,
     track_buffer: Arc<Mutex<Vec<TrackObservation>>>,
@@ -39,12 +40,15 @@ pub struct RedisConsumer {
 }
 
 impl RedisConsumer {
-    pub async fn new(redis_url: &str, state: AppState, rule_engine: Arc<RuleEngine>) -> anyhow::Result<Self> {
+    pub async fn new(
+        redis_url: &str,
+        state: AppState,
+        rule_engine: Arc<RuleEngine>,
+    ) -> anyhow::Result<Self> {
         let client = redis::Client::open(redis_url)?;
-        let connection = redis::aio::ConnectionManager::new(client).await?;
-        
+        let _connection = redis::aio::ConnectionManager::new(client).await?;
+
         Ok(Self {
-            client: connection,
             state,
             rule_engine,
             track_buffer: Arc::new(Mutex::new(Vec::new())),
@@ -59,23 +63,24 @@ impl RedisConsumer {
         let buffer = self.track_buffer.clone();
         let state = self.state.clone();
         let rule_engine = self.rule_engine.clone();
-        
+
         // Spawn buffer processing task
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 let tracks_to_process = {
                     let mut buf = buffer.lock().await;
-                    if buf.len() >= 10 { // Process if we have at least 10 tracks
+                    if buf.len() >= 10 {
+                        // Process if we have at least 10 tracks
                         std::mem::take(&mut *buf)
                     } else {
                         Vec::new()
                     }
                 };
-                
+
                 if !tracks_to_process.is_empty() {
                     if let Err(e) = process_tracks(&state, &rule_engine, tracks_to_process).await {
                         tracing::error!("Failed to process tracks: {}", e);
@@ -85,9 +90,10 @@ impl RedisConsumer {
         });
 
         // Create a new connection for pub/sub
-        let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
+        let redis_url =
+            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
         let client = redis::Client::open(redis_url)?;
-        
+
         let mut pubsub_conn = loop {
             match client.get_async_connection().await {
                 Ok(conn) => break conn.into_pubsub(),
@@ -98,7 +104,7 @@ impl RedisConsumer {
                 }
             }
         };
-        
+
         pubsub_conn.subscribe("tracks:updates").await?;
         tracing::info!("Subscribed to tracks:updates channel");
 
@@ -129,7 +135,7 @@ impl RedisConsumer {
 
     async fn handle_track_batch(&self, payload: String) -> anyhow::Result<()> {
         let tracks_json: Vec<TrackDeltaJson> = serde_json::from_str(&payload)?;
-        
+
         let tracks: Vec<TrackObservation> = tracks_json
             .into_iter()
             .map(|t| TrackObservation {
@@ -155,13 +161,14 @@ impl RedisConsumer {
         // Add to buffer
         let mut buffer = self.track_buffer.lock().await;
         buffer.extend(tracks);
-        
+
         // If buffer is full, process immediately
         if buffer.len() >= self.buffer_size {
             let tracks_to_process = std::mem::take(&mut *buffer);
             drop(buffer); // Release lock before processing
-            
-            if let Err(e) = process_tracks(&self.state, &self.rule_engine, tracks_to_process).await {
+
+            if let Err(e) = process_tracks(&self.state, &self.rule_engine, tracks_to_process).await
+            {
                 tracing::error!("Failed to process tracks: {}", e);
             }
         }
@@ -180,9 +187,10 @@ async fn process_tracks(
     }
 
     let now_ms = crate::now_ms();
-    
+
     // Group tracks by H3 cell
-    let mut cell_buckets: std::collections::HashMap<String, Vec<TrackObservation>> = std::collections::HashMap::new();
+    let mut cell_buckets: std::collections::HashMap<String, Vec<TrackObservation>> =
+        std::collections::HashMap::new();
     for track in &tracks {
         match crate::to_h3_cell(track.lat, track.lon, state.h3_resolution) {
             Ok(cell) => {
@@ -201,28 +209,22 @@ async fn process_tracks(
     let mut all_links: Vec<LinkUpsertRecord> = Vec::new();
 
     for result in rule_results {
-        match result {
-            crate::rules::RuleResult::Alert { alert, links } => {
-                // Check deduplication
-                let dedup_key = format!("{}:{}", alert.title, alert.description);
-                let should_skip = if let Some(last_seen) = state.dedup_cache.get(&dedup_key) {
-                    now_ms - *last_seen < state.dedup_ttl_ms
-                } else {
-                    false
-                };
+        let crate::rules::RuleResult::Alert { alert, links } = result;
+        // Check deduplication
+        let dedup_key = format!("{}:{}", alert.title, alert.description);
+        let should_skip = if let Some(last_seen) = state.dedup_cache.get(&dedup_key) {
+            now_ms - *last_seen < state.dedup_ttl_ms
+        } else {
+            false
+        };
 
-                if should_skip {
-                    continue;
-                }
-                state.dedup_cache.insert(dedup_key, now_ms);
-
-                all_alerts.push(alert);
-                all_links.extend(links);
-            }
-            crate::rules::RuleResult::Link(link) => {
-                all_links.push(link);
-            }
+        if should_skip {
+            continue;
         }
+        state.dedup_cache.insert(dedup_key, now_ms);
+
+        all_alerts.push(alert);
+        all_links.extend(links);
     }
 
     // Publish to Redis

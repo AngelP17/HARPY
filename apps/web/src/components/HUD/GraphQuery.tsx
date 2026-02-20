@@ -6,10 +6,10 @@ import styles from "./HUD.module.css";
 import { useStore } from "@/store/useStore";
 
 const TEMPLATES = [
-  { id: "related_tracks", name: "Related Tracks", params: ["track_id"] },
-  { id: "alert_evidence_chain", name: "Alert Evidence Chain", params: ["alert_id"] },
-  { id: "seen_by_sensor", name: "Seen By Sensor", params: ["sensor_id"] },
-  { id: "track_timeline", name: "Track Timeline", params: ["track_id"] },
+  { id: "find_associated_tracks", name: "Related Tracks", params: ["track_id"] },
+  { id: "get_evidence_chain", name: "Alert Evidence Chain", params: ["alert_id"] },
+  { id: "get_tracks_by_sensor", name: "Seen By Sensor", params: ["sensor_id"] },
+  { id: "get_track_history", name: "Track Timeline", params: ["track_id"] },
 ];
 
 type GraphQueryResult = Record<string, unknown>;
@@ -17,6 +17,10 @@ type GraphQueryResult = Record<string, unknown>;
 const GraphQuery: React.FC = () => {
   const showGraphQuery = useStore((state) => state.showGraphQuery);
   const setShowGraphQuery = useStore((state) => state.setShowGraphQuery);
+  const setFocusTrackId = useStore((state) => state.setFocusTrackId);
+  const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
+  const setIsLive = useStore((state) => state.setIsLive);
+  const setIsPlaying = useStore((state) => state.setIsPlaying);
   
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0]);
   const [params, setParams] = useState<Record<string, string>>({});
@@ -37,6 +41,23 @@ const GraphQuery: React.FC = () => {
   }, [setShowGraphQuery]);
 
   if (!showGraphQuery) return null;
+
+  const applyFirstResultToMap = () => {
+    if (!results || results.length === 0) {
+      return;
+    }
+    const first = results[0];
+    const idCandidate = first.id ?? first.track_id ?? first.node_id;
+    if (typeof idCandidate === "string" && idCandidate.length > 0) {
+      setFocusTrackId(idCandidate);
+    }
+    const tsCandidate = first.ts_ms;
+    if (typeof tsCandidate === "number" && Number.isFinite(tsCandidate) && tsCandidate > 0) {
+      setIsLive(false);
+      setIsPlaying(false);
+      setCurrentTimeMs(tsCandidate);
+    }
+  };
 
   const handleRun = async () => {
     if (isOfflineMode) {
@@ -69,8 +90,8 @@ const GraphQuery: React.FC = () => {
         throw new Error(body || `Graph query failed (${response.status})`);
       }
 
-      const body = (await response.json()) as { rows?: GraphQueryResult[] };
-      setResults(body.rows ?? []);
+      const body = (await response.json()) as { rows?: GraphQueryResult[]; results?: GraphQueryResult[] };
+      setResults(body.results ?? body.rows ?? []);
     } catch (runError) {
       const message = runError instanceof Error ? runError.message : "Unknown error";
       setError(message);
@@ -139,6 +160,15 @@ const GraphQuery: React.FC = () => {
 
           <div className={styles.resultsArea}>
             <label className={styles.label}>RESULTS</label>
+            <div className={styles.graphActions}>
+              <button
+                className="hud-button"
+                onClick={applyFirstResultToMap}
+                disabled={!results || results.length === 0}
+              >
+                APPLY_TO_MAP
+              </button>
+            </div>
             <div className={styles.resultsContent}>
               {error ? (
                 <span className={styles.critical}>{error}</span>

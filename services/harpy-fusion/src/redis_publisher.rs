@@ -22,7 +22,7 @@ impl RedisPublisher {
     /// Publish an alert to Redis pub/sub channel
     pub async fn publish_alert(&self, alert: &AlertUpsertRecord) -> anyhow::Result<()> {
         let channel = "alerts:updates";
-        
+
         let payload = json!({
             "id": alert.id,
             "severity": alert.severity,
@@ -35,21 +35,23 @@ impl RedisPublisher {
         });
 
         let mut client = self.client.clone();
-        client.publish::<_, _, ()>(channel, payload.to_string()).await?;
-        
+        client
+            .publish::<_, _, ()>(channel, payload.to_string())
+            .await?;
+
         tracing::debug!(
             alert_id = %alert.id,
             severity = %alert.severity,
             "Published alert to Redis"
         );
-        
+
         Ok(())
     }
 
     /// Publish a link to Redis pub/sub channel
     pub async fn publish_link(&self, link: &LinkUpsertRecord) -> anyhow::Result<()> {
         let channel = "links:updates";
-        
+
         let payload = json!({
             "id": link.id,
             "from_type": link.from_type,
@@ -62,18 +64,21 @@ impl RedisPublisher {
         });
 
         let mut client = self.client.clone();
-        client.publish::<_, _, ()>(channel, payload.to_string()).await?;
-        
+        client
+            .publish::<_, _, ()>(channel, payload.to_string())
+            .await?;
+
         tracing::debug!(
             link_id = %link.id,
             rel = %link.rel,
             "Published link to Redis"
         );
-        
+
         Ok(())
     }
 
     /// Store provider status in Redis (for health monitoring)
+    #[allow(dead_code)]
     pub async fn update_provider_status(
         &self,
         provider_id: &str,
@@ -96,7 +101,7 @@ impl RedisPublisher {
 
         let mut client = self.client.clone();
         client.set::<_, _, ()>(key, status.to_string()).await?;
-        
+
         Ok(())
     }
 }
@@ -108,7 +113,7 @@ mod tests {
 
     // Note: These tests require a running Redis instance
     // Run with: cargo test --features integration_tests
-    
+
     fn create_test_alert() -> AlertUpsertRecord {
         AlertUpsertRecord {
             id: "test-alert-001".to_string(),
@@ -141,9 +146,12 @@ mod tests {
         let publisher = RedisPublisher::new("redis://127.0.0.1:6379")
             .await
             .expect("Failed to connect to Redis");
-        
+
         let alert = create_test_alert();
-        publisher.publish_alert(&alert).await.expect("Failed to publish alert");
+        publisher
+            .publish_alert(&alert)
+            .await
+            .expect("Failed to publish alert");
     }
 
     #[tokio::test]
@@ -152,8 +160,11 @@ mod tests {
         let publisher = RedisPublisher::new("redis://127.0.0.1:6379")
             .await
             .expect("Failed to connect to Redis");
-        
+
         let link = create_test_link();
-        publisher.publish_link(&link).await.expect("Failed to publish link");
+        publisher
+            .publish_link(&link)
+            .await
+            .expect("Failed to publish link");
     }
 }

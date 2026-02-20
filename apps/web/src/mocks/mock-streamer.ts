@@ -14,7 +14,9 @@ interface MockTrackSeed {
   kind: harpy.v1.TrackKind;
 }
 
-const TRACK_COUNT = 72;
+const AIRCRAFT_COUNT = 6000;
+const SATELLITE_COUNT = 180;
+const CAMERA_COUNT = 50;
 const TWO_PI = Math.PI * 2;
 
 const wrapLongitude = (lon: number): number => {
@@ -29,28 +31,53 @@ const clampLatitude = (lat: number): number => Math.max(-85, Math.min(85, lat));
 
 const buildTrackSeeds = (): MockTrackSeed[] => {
   const seeds: MockTrackSeed[] = [];
-  for (let i = 0; i < TRACK_COUNT; i += 1) {
-    const kind =
-      i % 4 === 0
-        ? harpy.v1.TrackKind.TRACK_KIND_AIRCRAFT
-        : i % 4 === 1
-          ? harpy.v1.TrackKind.TRACK_KIND_SATELLITE
-          : i % 4 === 2
-            ? harpy.v1.TrackKind.TRACK_KIND_GROUND
-            : harpy.v1.TrackKind.TRACK_KIND_VESSEL;
-
+  for (let i = 0; i < AIRCRAFT_COUNT; i += 1) {
     seeds.push({
-      id: `track_${i}`,
-      baseLat: -58 + (i % 12) * 10.5,
-      baseLon: -170 + ((i * 37) % 340),
-      latAmp: 0.6 + (i % 5) * 0.35,
-      lonAmp: 0.9 + (i % 7) * 0.4,
-      baseAlt: 300 + ((i * 113) % 14500),
-      altAmp: 120 + ((i * 29) % 800),
+      id: `ac_${i}`,
+      baseLat: -60 + (i % 120) * 1.0,
+      baseLon: -180 + ((i * 13) % 360),
+      latAmp: 0.08 + (i % 7) * 0.03,
+      lonAmp: 0.15 + (i % 9) * 0.04,
+      baseAlt: 7_500 + ((i * 17) % 4_500),
+      altAmp: 250 + ((i * 7) % 280),
       phase: ((i * 0.61803398875) % 1) * TWO_PI,
-      speed: 95 + (i % 11) * 22,
+      speed: 190 + (i % 13) * 8,
       headingOffset: (i * 47) % 360,
-      kind,
+      kind: harpy.v1.TrackKind.TRACK_KIND_AIRCRAFT,
+    });
+  }
+
+  for (let i = 0; i < SATELLITE_COUNT; i += 1) {
+    const index = AIRCRAFT_COUNT + i;
+    seeds.push({
+      id: `sat_${i}`,
+      baseLat: -70 + (i % 28) * 5.0,
+      baseLon: -180 + ((i * 29) % 360),
+      latAmp: 0.6 + (i % 5) * 0.2,
+      lonAmp: 1.0 + (i % 4) * 0.35,
+      baseAlt: 420_000 + ((i * 3000) % 180_000),
+      altAmp: 6_000 + ((i * 97) % 4_000),
+      phase: ((index * 0.61803398875) % 1) * TWO_PI,
+      speed: 7_500 + (i % 17) * 15,
+      headingOffset: (index * 47) % 360,
+      kind: harpy.v1.TrackKind.TRACK_KIND_SATELLITE,
+    });
+  }
+
+  for (let i = 0; i < CAMERA_COUNT; i += 1) {
+    const index = AIRCRAFT_COUNT + SATELLITE_COUNT + i;
+    seeds.push({
+      id: `cam_${i}`,
+      baseLat: -58 + (i % 25) * 4.8,
+      baseLon: -168 + ((i * 43) % 336),
+      latAmp: 0.004,
+      lonAmp: 0.004,
+      baseAlt: 12 + (i % 5) * 2,
+      altAmp: 0.2,
+      phase: ((index * 0.61803398875) % 1) * TWO_PI,
+      speed: 0.1,
+      headingOffset: (index * 47) % 360,
+      kind: harpy.v1.TrackKind.TRACK_KIND_GROUND,
     });
   }
   return seeds;
@@ -67,9 +94,10 @@ export class MockStreamer {
   }
 
   start() {
+    this.stop();
     this.intervalId = setInterval(() => {
       this.generateBatch();
-    }, 1000);
+    }, 500);
   }
 
   stop() {
@@ -102,7 +130,7 @@ export class MockStreamer {
         providerId: "mock-streamer",
         meta: {
           source: "deterministic",
-          track_group: String(index % 6),
+          track_group: String(index % 16),
         },
         tsMs: now,
       };

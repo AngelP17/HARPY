@@ -6,7 +6,6 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
@@ -23,7 +22,7 @@ use uuid::Uuid;
 mod tools;
 mod validation;
 
-use tools::{ToolCall, ToolCallRequest, ToolCallResponse, ToolExecutor};
+use tools::{ToolCall, ToolExecutor};
 use validation::{validate_tool_call, ValidationResult};
 
 #[derive(Clone)]
@@ -31,7 +30,6 @@ struct AppState {
     db_pool: Option<PgPool>,
     tool_executor: ToolExecutor,
     allowed_tools: HashSet<String>,
-    graph_url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -72,11 +70,6 @@ struct ToolInfo {
 }
 
 #[derive(Debug, Serialize)]
-struct ConfirmRequest {
-    confirmation_token: String,
-}
-
-#[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
     details: Option<String>,
@@ -109,8 +102,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    let graph_url = std::env::var("GRAPH_URL")
-        .unwrap_or_else(|_| "http://harpy-graph:8083".to_string());
+    let graph_url =
+        std::env::var("GRAPH_URL").unwrap_or_else(|_| "http://harpy-graph:8083".to_string());
 
     // Define allowed tools
     let mut allowed_tools = HashSet::new();
@@ -127,7 +120,6 @@ async fn main() -> anyhow::Result<()> {
         db_pool,
         tool_executor,
         allowed_tools,
-        graph_url: graph_url.clone(),
     };
 
     let app = Router::new()
@@ -224,6 +216,9 @@ async fn aip_query(
 ) -> Result<Json<AipQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
     let request_id = format!("aip-{}", Uuid::new_v4().simple());
     let start_time = std::time::Instant::now();
+    if let Some(query) = req.query.as_deref() {
+        tracing::debug!(request_id = %request_id, query = %query, "received AIP query context");
+    }
 
     // Step 1: Validate tool call
     let validation = validate_tool_call(&req.tool_call, &state.allowed_tools);
@@ -239,13 +234,13 @@ async fn aip_query(
             )
             .await;
 
-            return Err((
+            Err((
                 StatusCode::BAD_REQUEST,
                 Json(ErrorResponse {
                     error: "Validation failed".to_string(),
                     details: Some(reason),
                 }),
-            ));
+            ))
         }
         ValidationResult::Valid { scene_altering } => {
             // Step 2: Handle explain mode
@@ -265,7 +260,7 @@ async fn aip_query(
             // Step 3: Check confirmation for scene-altering actions
             if scene_altering && req.confirmation_token.is_none() {
                 let token = generate_confirmation_token(&req.tool_call);
-                
+
                 audit_log(
                     &state,
                     &request_id,
@@ -291,7 +286,7 @@ async fn aip_query(
             match state.tool_executor.execute(&req.tool_call).await {
                 Ok(result) => {
                     let execution_time_ms = start_time.elapsed().as_millis() as u64;
-                    
+
                     audit_log(
                         &state,
                         &request_id,
@@ -346,8 +341,16 @@ async fn aip_query(
 fn generate_explanation(tool_call: &ToolCall) -> String {
     match tool_call.name.as_str() {
         "seek_to_time" => {
-            let start = tool_call.params.get("start_ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-            let end = tool_call.params.get("end_ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            let start = tool_call
+                .params
+                .get("start_ts_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            let end = tool_call
+                .params
+                .get("end_ts_ms")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
             format!(
                 "Will switch to PLAYBACK mode and seek from {} to {} ({} seconds)",
                 start,
@@ -356,24 +359,51 @@ fn generate_explanation(tool_call: &ToolCall) -> String {
             )
         }
         "seek_to_bbox" => {
-            let min_lat = tool_call.params.get("min_lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let max_lat = tool_call.params.get("max_lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let min_lon = tool_call.params.get("min_lon").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let max_lon = tool_call.params.get("max_lon").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let min_lat = tool_call
+                .params
+                .get("min_lat")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let max_lat = tool_call
+                .params
+                .get("max_lat")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let min_lon = tool_call
+                .params
+                .get("min_lon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let max_lon = tool_call
+                .params
+                .get("max_lon")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             format!(
                 "Will pan camera to region: lat [{:.4}, {:.4}], lon [{:.4}, {:.4}]",
                 min_lat, max_lat, min_lon, max_lon
             )
         }
         "set_layers" => {
-            let layers = tool_call.params.get("layers")
+            let layers = tool_call
+                .params
+                .get("layers")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
                 .unwrap_or_default();
             format!("Will enable layers: {}", layers)
         }
         "run_graph_query" => {
-            let template = tool_call.params.get("template").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let template = tool_call
+                .params
+                .get("template")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             format!("Will execute graph query template: {}", template)
         }
         _ => format!("Will execute tool: {}", tool_call.name),

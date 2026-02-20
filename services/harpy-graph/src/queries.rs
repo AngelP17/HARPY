@@ -37,8 +37,6 @@ enum ParamType {
     String,
     Integer,
     Float,
-    Boolean,
-    ArrayString,
 }
 
 impl QueryEngine {
@@ -141,7 +139,8 @@ impl QueryEngine {
             "find_associated_tracks".to_string(),
             QueryTemplate {
                 name: "find_associated_tracks".to_string(),
-                description: "Find tracks associated with a given track (within distance)".to_string(),
+                description: "Find tracks associated with a given track (within distance)"
+                    .to_string(),
                 params: vec![
                     ParamDef {
                         name: "track_id".to_string(),
@@ -437,8 +436,9 @@ impl QueryEngine {
         let param_values = self.extract_params(template, params)?;
 
         // Build query with pagination parameters
-        let mut query_params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send + Sync>> = Vec::new();
-        
+        let mut query_params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send + Sync>> =
+            Vec::new();
+
         // Add template-specific params first
         for param_def in &template.params {
             if let Some(value) = param_values.get(&param_def.name) {
@@ -448,7 +448,7 @@ impl QueryEngine {
                 query_params.push(Box::new(None::<String>));
             }
         }
-        
+
         // Add pagination params (limit and offset are always last two)
         query_params.push(Box::new(limit));
         query_params.push(Box::new(offset));
@@ -469,12 +469,12 @@ impl QueryEngine {
             .fetch_all(pool)
             .await?;
 
-        let results: Vec<Value> = rows
-            .into_iter()
-            .map(|row| self.row_to_json(row))
-            .collect();
+        let results: Vec<Value> = rows.into_iter().map(|row| self.row_to_json(row)).collect();
 
-        Ok(QueryResult { rows: results, total })
+        Ok(QueryResult {
+            rows: results,
+            total,
+        })
     }
 
     fn extract_params(
@@ -493,13 +493,6 @@ impl QueryEngine {
                     ParamType::String => value.as_str().map(|s| s.to_string()),
                     ParamType::Integer => value.as_i64().map(|i| i.to_string()),
                     ParamType::Float => value.as_f64().map(|f| f.to_string()),
-                    ParamType::Boolean => value.as_bool().map(|b| b.to_string()),
-                    ParamType::ArrayString => value.as_array().map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str())
-                            .collect::<Vec<_>>()
-                            .join(",")
-                    }),
                 };
 
                 if let Some(v) = str_value {
@@ -521,40 +514,53 @@ impl QueryEngine {
         Ok(result)
     }
 
-    fn bind_params<'q, T: sqlx::Encode<'q, sqlx::Postgres> + sqlx::Type<sqlx::Postgres> + Send + 'q>(
-        &self,
-        query: sqlx::query::QueryScalar<'q, sqlx::Postgres, i64, sqlx::postgres::PgArguments>,
-        params: &HashMap<String, String>,
-        param_defs: &[ParamDef],
-    ) -> sqlx::query::QueryScalar<'q, sqlx::Postgres, i64, sqlx::postgres::PgArguments> {
-        // This is a simplified binding - in production, use proper prepared statements
-        query
-    }
-
     fn row_to_json(&self, row: sqlx::postgres::PgRow) -> Value {
         let mut map = serde_json::Map::new();
-        
+
         for column in row.columns() {
             let name = column.name();
             let type_name = column.type_info().name();
-            
+
             let value: Value = if type_name.contains("TEXT") || type_name.contains("VARCHAR") {
-                row.try_get::<Option<String>, _>(name).ok().flatten().map(|v| json!(v)).unwrap_or(Value::Null)
+                row.try_get::<Option<String>, _>(name)
+                    .ok()
+                    .flatten()
+                    .map(|v| json!(v))
+                    .unwrap_or(Value::Null)
             } else if type_name.contains("INT") {
-                row.try_get::<Option<i64>, _>(name).ok().flatten().map(|v| json!(v)).unwrap_or(Value::Null)
+                row.try_get::<Option<i64>, _>(name)
+                    .ok()
+                    .flatten()
+                    .map(|v| json!(v))
+                    .unwrap_or(Value::Null)
             } else if type_name.contains("FLOAT") {
-                row.try_get::<Option<f64>, _>(name).ok().flatten().map(|v| json!(v)).unwrap_or(Value::Null)
+                row.try_get::<Option<f64>, _>(name)
+                    .ok()
+                    .flatten()
+                    .map(|v| json!(v))
+                    .unwrap_or(Value::Null)
             } else if type_name.contains("BOOL") {
-                row.try_get::<Option<bool>, _>(name).ok().flatten().map(|v| json!(v)).unwrap_or(Value::Null)
+                row.try_get::<Option<bool>, _>(name)
+                    .ok()
+                    .flatten()
+                    .map(|v| json!(v))
+                    .unwrap_or(Value::Null)
             } else if type_name.contains("JSON") {
-                row.try_get::<Option<Value>, _>(name).ok().flatten().unwrap_or(Value::Null)
+                row.try_get::<Option<Value>, _>(name)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(Value::Null)
             } else {
-                row.try_get::<Option<String>, _>(name).ok().flatten().map(|v| json!(v)).unwrap_or(Value::Null)
+                row.try_get::<Option<String>, _>(name)
+                    .ok()
+                    .flatten()
+                    .map(|v| json!(v))
+                    .unwrap_or(Value::Null)
             };
-            
+
             map.insert(name.to_string(), value);
         }
-        
+
         Value::Object(map)
     }
 }
@@ -565,8 +571,6 @@ impl std::fmt::Debug for ParamType {
             ParamType::String => write!(f, "string"),
             ParamType::Integer => write!(f, "integer"),
             ParamType::Float => write!(f, "float"),
-            ParamType::Boolean => write!(f, "boolean"),
-            ParamType::ArrayString => write!(f, "array<string>"),
         }
     }
 }

@@ -2,25 +2,13 @@
 //!
 //! Tools for scene manipulation and data exploration.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct ToolCall {
     pub name: String,
     pub params: Value,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ToolCallRequest {
-    pub tool_call: ToolCall,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ToolCallResponse {
-    pub success: bool,
-    pub result: Option<Value>,
-    pub error: Option<String>,
 }
 
 #[derive(Clone)]
@@ -129,7 +117,15 @@ impl ToolExecutor {
             .collect();
 
         // Validate layer names
-        let valid_layers = ["AIRCRAFT", "SATELLITE", "GROUND", "VESSEL", "CAMERA", "DETECTION", "ALERT"];
+        let valid_layers = [
+            "AIRCRAFT",
+            "SATELLITE",
+            "GROUND",
+            "VESSEL",
+            "CAMERA",
+            "DETECTION",
+            "ALERT",
+        ];
         for layer in &layer_names {
             if !valid_layers.contains(&layer.as_str()) {
                 return Err(anyhow::anyhow!("Invalid layer: {}", layer));
@@ -153,7 +149,7 @@ impl ToolExecutor {
 
         // Call harpy-graph service
         let url = format!("{}/graph/query", self.graph_url);
-        
+
         let request_body = json!({
             "template": template,
             "params": query_params,
@@ -208,7 +204,7 @@ impl ToolExecutor {
 
         // Query graph service for track info
         let url = format!("{}/graph/query", self.graph_url);
-        
+
         let request_body = json!({
             "template": "search_tracks",
             "params": {

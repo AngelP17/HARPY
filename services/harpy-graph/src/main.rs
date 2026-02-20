@@ -6,15 +6,13 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use harpy_core::types::HealthResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-use std::collections::HashMap;
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::net::SocketAddr;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};

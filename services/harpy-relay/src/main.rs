@@ -16,8 +16,10 @@ use harpy_proto::harpy::v1::{
     BoundingBox, Envelope, LayerType, SubscriptionMode, SubscriptionRequest,
 };
 use prost::Message as ProstMessage;
+use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -41,7 +43,64 @@ pub(crate) struct AppState {
     pub(crate) subscription_manager: Arc<SubscriptionManager>,
     pub(crate) connection_counter: Arc<AtomicU64>,
     pub(crate) db_pool: Option<PgPool>,
+    pub(crate) redis_client: Option<redis::Client>,
     pub(crate) playback_tasks: Arc<DashMap<String, JoinHandle<()>>>,
+}
+
+#[derive(Debug, Serialize)]
+struct DebugSnapshotResponse {
+    ts_ms: u64,
+    relay: RelayDebugSnapshot,
+    redis: RedisDebugSnapshot,
+}
+
+#[derive(Debug, Serialize)]
+struct RelayDebugSnapshot {
+    connected_clients: usize,
+    playback_clients: usize,
+    subscriptions: Vec<subscription::SubscriptionDebugInfo>,
+    subscriptions_by_layer: HashMap<String, usize>,
+    backpressure_totals: BackpressureTotals,
+}
+
+#[derive(Debug, Serialize)]
+struct BackpressureTotals {
+    track_batches_dropped: usize,
+    track_batches_sent: usize,
+    high_priority_sent: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct RedisDebugSnapshot {
+    connected: bool,
+    track_cache: TrackCacheStats,
+    providers: Vec<ProviderStatusDebug>,
+}
+
+#[derive(Debug, Serialize)]
+struct TrackCacheStats {
+    total: usize,
+    by_kind: HashMap<String, usize>,
+    by_provider: HashMap<String, usize>,
+    last_update_ts_ms: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+struct ProviderStatusDebug {
+    provider_id: String,
+    circuit_state: String,
+    freshness: String,
+    last_update_ts_ms: u64,
+    last_success: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct TrackCacheEntry {
+    kind: i32,
+    #[serde(default)]
+    ts_ms: u64,
+    #[serde(default)]
+    provider_id: String,
 }
 
 #[tokio::main]
@@ -63,6 +122,7 @@ async fn main() -> anyhow::Result<()> {
         std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgres://harpy:harpy@localhost:5432/harpy".to_string());
+    let redis_client = redis::Client::open(redis_url.clone()).ok();
 
     // Create subscription manager
     let subscription_manager = SubscriptionManager::arc();
@@ -90,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
         subscription_manager: subscription_manager.clone(),
         connection_counter: Arc::new(AtomicU64::new(0)),
         db_pool,
+        redis_client,
         playback_tasks: Arc::new(DashMap::new()),
     };
 
@@ -107,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/health", get(health_check))
         .route("/metrics", get(metrics_handler))
         .route("/seek", get(seek::seek_handler))
+        .route("/api/debug/snapshot", get(debug_snapshot_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -530,4 +592,140 @@ async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
          harpy_relay_connected_clients {}\n",
         client_count
     )
+}
+
+async fn debug_snapshot_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let subscriptions = state.subscription_manager.debug_subscriptions().await;
+    let mut subscriptions_by_layer: HashMap<String, usize> = HashMap::new();
+    let mut track_batches_dropped = 0usize;
+    let mut track_batches_sent = 0usize;
+    let mut high_priority_sent = 0usize;
+
+    for subscription in &subscriptions {
+        for layer in &subscription.layers {
+            *subscriptions_by_layer.entry(layer.clone()).or_insert(0) += 1;
+        }
+        track_batches_dropped += subscription.backpressure.track_batches_dropped;
+        track_batches_sent += subscription.backpressure.track_batches_sent;
+        high_priority_sent += subscription.backpressure.high_priority_sent;
+    }
+
+    let relay = RelayDebugSnapshot {
+        connected_clients: subscriptions.len(),
+        playback_clients: state.playback_tasks.len(),
+        subscriptions,
+        subscriptions_by_layer,
+        backpressure_totals: BackpressureTotals {
+            track_batches_dropped,
+            track_batches_sent,
+            high_priority_sent,
+        },
+    };
+
+    let redis = match &state.redis_client {
+        Some(client) => {
+            let mut conn = match client.get_async_connection().await {
+                Ok(conn) => conn,
+                Err(err) => {
+                    tracing::debug!("debug snapshot redis connect error: {}", err);
+                    return Json(DebugSnapshotResponse {
+                        ts_ms: now_ms(),
+                        relay,
+                        redis: RedisDebugSnapshot {
+                            connected: false,
+                            track_cache: TrackCacheStats {
+                                total: 0,
+                                by_kind: HashMap::new(),
+                                by_provider: HashMap::new(),
+                                last_update_ts_ms: 0,
+                            },
+                            providers: Vec::new(),
+                        },
+                    });
+                }
+            };
+
+            let provider_keys = redis::cmd("KEYS")
+                .arg("provider:status:*")
+                .query_async::<_, Vec<String>>(&mut conn)
+                .await
+                .unwrap_or_default();
+
+            let mut providers = Vec::with_capacity(provider_keys.len());
+            for key in provider_keys {
+                if let Ok(value) = redis::cmd("GET")
+                    .arg(&key)
+                    .query_async::<_, String>(&mut conn)
+                    .await
+                {
+                    if let Ok(parsed) = serde_json::from_str::<ProviderStatusDebug>(&value) {
+                        providers.push(parsed);
+                    }
+                }
+            }
+            providers.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+
+            let track_keys = redis::cmd("KEYS")
+                .arg("track:*")
+                .query_async::<_, Vec<String>>(&mut conn)
+                .await
+                .unwrap_or_default();
+
+            let mut by_kind: HashMap<String, usize> = HashMap::new();
+            let mut by_provider: HashMap<String, usize> = HashMap::new();
+            let mut last_update_ts_ms = 0u64;
+
+            for key in &track_keys {
+                if let Ok(value) = redis::cmd("GET")
+                    .arg(key)
+                    .query_async::<_, String>(&mut conn)
+                    .await
+                {
+                    if let Ok(parsed) = serde_json::from_str::<TrackCacheEntry>(&value) {
+                        let kind_name = match parsed.kind {
+                            1 => "AIRCRAFT",
+                            2 => "SATELLITE",
+                            3 => "GROUND",
+                            4 => "VESSEL",
+                            _ => "UNSPECIFIED",
+                        };
+                        *by_kind.entry(kind_name.to_string()).or_insert(0) += 1;
+                        if !parsed.provider_id.is_empty() {
+                            *by_provider.entry(parsed.provider_id).or_insert(0) += 1;
+                        }
+                        if parsed.ts_ms > last_update_ts_ms {
+                            last_update_ts_ms = parsed.ts_ms;
+                        }
+                    }
+                }
+            }
+
+            RedisDebugSnapshot {
+                connected: true,
+                track_cache: TrackCacheStats {
+                    total: track_keys.len(),
+                    by_kind,
+                    by_provider,
+                    last_update_ts_ms,
+                },
+                providers,
+            }
+        }
+        None => RedisDebugSnapshot {
+            connected: false,
+            track_cache: TrackCacheStats {
+                total: 0,
+                by_kind: HashMap::new(),
+                by_provider: HashMap::new(),
+                last_update_ts_ms: 0,
+            },
+            providers: Vec::new(),
+        },
+    };
+
+    Json(DebugSnapshotResponse {
+        ts_ms: now_ms(),
+        relay,
+        redis,
+    })
 }

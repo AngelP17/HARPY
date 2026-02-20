@@ -6,6 +6,49 @@ import styles from "./HUD.module.css";
 import { clsx } from "clsx";
 import { useStore } from "@/store/useStore";
 
+interface SeekApiOk {
+  delta_ranges?: Array<{ estimated_deltas?: number }>;
+  snapshot?: { id?: string } | null;
+}
+
+interface SeekApiResult {
+  Ok?: SeekApiOk;
+  Err?: { error?: string };
+}
+
+const resolveRelayHttpBase = (): string => {
+  const envBase = process.env.NEXT_PUBLIC_RELAY_HTTP_URL;
+  if (envBase) {
+    return envBase;
+  }
+  const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
+  if (wsUrl.startsWith("ws://")) {
+    return wsUrl.replace("ws://", "http://").replace(/\/ws$/, "");
+  }
+  if (wsUrl.startsWith("wss://")) {
+    return wsUrl.replace("wss://", "https://").replace(/\/ws$/, "");
+  }
+  return "http://localhost:8080";
+};
+
+const mapLayersToSeekKinds = (layers: string[]): string => {
+  const kinds = new Set<string>();
+  for (const layer of layers) {
+    if (layer === "ADSB") {
+      kinds.add("aircraft");
+    } else if (layer === "TLE_SAT") {
+      kinds.add("satellite");
+    } else if (layer === "SENS_CV" || layer === "WX_RADAR") {
+      kinds.add("ground");
+    }
+  }
+  if (kinds.size === 0) {
+    kinds.add("aircraft");
+    kinds.add("satellite");
+  }
+  return Array.from(kinds).join(",");
+};
+
 const Timeline: React.FC = () => {
   const isLive = useStore((state) => state.isLive);
   const setIsLive = useStore((state) => state.setIsLive);
@@ -15,6 +58,9 @@ const Timeline: React.FC = () => {
   const setPlaybackRate = useStore((state) => state.setPlaybackRate);
   const currentTimeMs = useStore((state) => state.currentTimeMs);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
+  const layers = useStore((state) => state.layers);
+  const seekMeta = useStore((state) => state.seekMeta);
+  const setSeekMeta = useStore((state) => state.setSeekMeta);
   const [scrubWindowEndMs, setScrubWindowEndMs] = useState<number>(0);
 
   useEffect(() => {
@@ -70,6 +116,60 @@ const Timeline: React.FC = () => {
   const windowEndMs = isLive ? currentMs : effectiveScrubWindowEndMs;
   const windowStartMs = Math.max(0, windowEndMs - 3_600_000);
 
+  useEffect(() => {
+    if (isLive || currentMs <= 0) {
+      return;
+    }
+    const relayBase = resolveRelayHttpBase();
+    const layersParam = mapLayersToSeekKinds(layers);
+    const startTsMs = Math.max(0, currentMs - 3_600_000);
+    const timeout = setTimeout(async () => {
+      setSeekMeta({
+        loading: true,
+        estimatedDeltas: 0,
+        snapshotId: null,
+        error: null,
+        updatedAtMs: Date.now(),
+      });
+      try {
+        const params = new URLSearchParams({
+          start_ts_ms: String(startTsMs),
+          end_ts_ms: String(currentMs),
+          layers: layersParam,
+        });
+        const response = await fetch(`${relayBase}/seek?${params.toString()}`, {
+          method: "GET",
+          cache: "no-store",
+        });
+        if (!response.ok) {
+          throw new Error(`seek failed (${response.status})`);
+        }
+        const body = (await response.json()) as SeekApiResult;
+        const ok = body.Ok;
+        if (!ok) {
+          throw new Error(body.Err?.error || "seek failed");
+        }
+        setSeekMeta({
+          loading: false,
+          error: null,
+          estimatedDeltas: ok.delta_ranges?.[0]?.estimated_deltas ?? 0,
+          snapshotId: ok.snapshot?.id ?? null,
+          updatedAtMs: Date.now(),
+        });
+      } catch (error) {
+        setSeekMeta({
+          loading: false,
+          estimatedDeltas: 0,
+          snapshotId: null,
+          error: error instanceof Error ? error.message : "seek failed",
+          updatedAtMs: Date.now(),
+        });
+      }
+    }, 250);
+
+    return () => clearTimeout(timeout);
+  }, [currentMs, isLive, layers, setSeekMeta]);
+
   return (
     <div className={clsx("hud-panel", styles.timelineBar)}>
       <div className={styles.timelineControls}>
@@ -102,6 +202,15 @@ const Timeline: React.FC = () => {
             />
             <div className={styles.timeDisplay}>
               {formatTime(currentTimeMs)}
+              {!isLive ? (
+                <span className={styles.seekMeta}>
+                  {seekMeta.loading
+                    ? " SEEK..."
+                    : seekMeta.error
+                      ? " SEEK_ERR"
+                      : ` Δ${seekMeta.estimatedDeltas}${seekMeta.snapshotId ? ` S:${seekMeta.snapshotId.substring(0, 8)}` : ""}`}
+                </span>
+              ) : null}
             </div>
         </div>
 

@@ -21,6 +21,7 @@ const HUD: React.FC = () => {
   const toggleLayer = useStore((state) => state.toggleLayer);
   const connectionStatus = useStore((state) => state.connectionStatus);
   const providerStatus = useStore((state) => state.providerStatus);
+  const dataPlaneStats = useStore((state) => state.dataPlaneStats);
   const setShowGraphQuery = useStore((state) => state.setShowGraphQuery);
   const setShowCommandPalette = useStore((state) => state.setShowCommandPalette);
   const setShowExport = useStore((state) => state.setShowExport);
@@ -28,6 +29,10 @@ const HUD: React.FC = () => {
   const setUserRole = useStore((state) => state.setUserRole);
   const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
   const isOfflineMode = streamMode === "offline";
+  const lastMessageDisplay =
+    dataPlaneStats.lastMessageTsMs === null
+      ? "--"
+      : new Date(dataPlaneStats.lastMessageTsMs).toISOString().substring(11, 19);
 
   const modes: VisionMode[] = ["NORMAL", "EO", "CRT", "NVG", "FLIR"];
 
@@ -166,29 +171,91 @@ const HUD: React.FC = () => {
                 <div className={styles.statusGrid}>
                   <div className={styles.statusItem}>
                     <span className={styles.label}>WS_RTT</span>
-                    <span className={styles.value}>--MS</span>
+                    <span className={styles.value}>
+                      {dataPlaneStats.wsRttMs === null ? "--" : Math.round(dataPlaneStats.wsRttMs)}MS
+                    </span>
+                  </div>
+                  <div className={styles.statusItem}>
+                    <span className={styles.label}>THROUGHPUT</span>
+                    <span className={styles.value}>{Math.round(dataPlaneStats.throughputTps)}/S</span>
+                  </div>
+                  <div className={styles.statusItem}>
+                    <span className={styles.label}>ALERTS</span>
+                    <span className={styles.value}>{dataPlaneStats.alertsPerSec.toFixed(1)}/S</span>
+                  </div>
+                  <div className={styles.statusItem}>
+                    <span className={styles.label}>LAST_MSG</span>
+                    <span className={styles.value}>{lastMessageDisplay}</span>
                   </div>
                 </div>
               ) : (
-                Object.values(providerStatus).map((p) => (
-                  <div key={p.providerId} className={styles.providerItem}>
-                    <div className={styles.providerInfo}>
-                      <span className={styles.providerIdLabel}>{p.providerId}</span>
-                      <span className={clsx(styles.freshnessBadge, {
-                        [styles.freshnessCritical]: p.freshness === "FRESHNESS_CRITICAL",
-                        [styles.freshnessStale]: p.freshness === "FRESHNESS_STALE",
-                        [styles.freshnessAging]: p.freshness === "FRESHNESS_AGING",
-                        [styles.freshnessFresh]: p.freshness === "FRESHNESS_FRESH",
-                      })}>
-                        {p.freshness.replace("FRESHNESS_", "")}
+                <>
+                  <div className={styles.statusGrid}>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>WS_RTT</span>
+                      <span className={styles.value}>
+                        {dataPlaneStats.wsRttMs === null ? "--" : Math.round(dataPlaneStats.wsRttMs)}MS
                       </span>
                     </div>
-                    <div className={styles.providerMeta}>
-                      <span>{p.circuitState.replace("CIRCUIT_STATE_", "")}</span>
-                      <span>{isNaN(p.latencyMs) ? "--" : Math.round(p.latencyMs)}ms</span>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>THROUGHPUT</span>
+                      <span className={styles.value}>{Math.round(dataPlaneStats.throughputTps)}/S</span>
+                    </div>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>ALERTS</span>
+                      <span className={styles.value}>{dataPlaneStats.alertsPerSec.toFixed(1)}/S</span>
+                    </div>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>LAST_MSG</span>
+                      <span className={styles.value}>{lastMessageDisplay}</span>
                     </div>
                   </div>
-                ))
+                  <div className={styles.statusGrid}>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>TRACKS</span>
+                      <span className={styles.value}>{dataPlaneStats.renderedTrackCount}</span>
+                    </div>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>RELAY_DROP</span>
+                      <span className={styles.value}>{dataPlaneStats.relayBackpressureDropped}</span>
+                    </div>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>RELAY_SENT</span>
+                      <span className={styles.value}>{dataPlaneStats.relayBackpressureSent}</span>
+                    </div>
+                    <div className={styles.statusItem}>
+                      <span className={styles.label}>CLIENTS</span>
+                      <span className={styles.value}>
+                        {dataPlaneStats.relayConnectedClients}/{dataPlaneStats.relayPlaybackClients}
+                      </span>
+                    </div>
+                  </div>
+                  <div className={styles.renderedByKind}>
+                    <span>AIR {dataPlaneStats.renderedByKind.AIRCRAFT ?? 0}</span>
+                    <span>SAT {dataPlaneStats.renderedByKind.SATELLITE ?? 0}</span>
+                    <span>GRD {dataPlaneStats.renderedByKind.GROUND ?? 0}</span>
+                    <span>VES {dataPlaneStats.renderedByKind.VESSEL ?? 0}</span>
+                  </div>
+                  {Object.values(providerStatus).map((p) => (
+                    <div key={p.providerId} className={styles.providerItem}>
+                      <div className={styles.providerInfo}>
+                        <span className={styles.providerIdLabel}>{p.providerId}</span>
+                        <span className={clsx(styles.freshnessBadge, {
+                          [styles.freshnessCritical]: p.freshness === "FRESHNESS_CRITICAL",
+                          [styles.freshnessStale]: p.freshness === "FRESHNESS_STALE",
+                          [styles.freshnessAging]: p.freshness === "FRESHNESS_AGING",
+                          [styles.freshnessFresh]: p.freshness === "FRESHNESS_FRESH",
+                        })}>
+                          {p.freshness.replace("FRESHNESS_", "")}
+                        </span>
+                      </div>
+                      <div className={styles.providerMeta}>
+                        <span>{p.circuitState.replace("CIRCUIT_STATE_", "")}</span>
+                        <span>{isNaN(p.latencyMs) ? "--" : Math.round(p.latencyMs)}ms</span>
+                      </div>
+                    </div>
+                  ))}
+                </>
               )}
             </div>
           </div>

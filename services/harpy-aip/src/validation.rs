@@ -11,13 +11,12 @@ pub enum ValidationResult {
 }
 
 /// Scene-altering tools require confirmation
-const SCENE_ALTERING_TOOLS: &[&str] = &[
-    "seek_to_time",
-    "seek_to_bbox",
-    "set_layers",
-];
+const SCENE_ALTERING_TOOLS: &[&str] = &["seek_to_time", "seek_to_bbox", "set_layers"];
 
-pub fn validate_tool_call(tool_call: &ToolCall, allowed_tools: &HashSet<String>) -> ValidationResult {
+pub fn validate_tool_call(
+    tool_call: &ToolCall,
+    allowed_tools: &HashSet<String>,
+) -> ValidationResult {
     // Check if tool is in allow list
     if !allowed_tools.contains(&tool_call.name) {
         return ValidationResult::Invalid {
@@ -176,7 +175,10 @@ fn validate_graph_query(params: &serde_json::Value) -> Result<(), String> {
     .collect();
 
     if !allowed_templates.contains(template) {
-        return Err(format!("Template '{}' is not in the allowed list", template));
+        return Err(format!(
+            "Template '{}' is not in the allowed list",
+            template
+        ));
     }
 
     Ok(())
@@ -197,7 +199,10 @@ fn validate_get_track_info(params: &serde_json::Value) -> Result<(), String> {
     }
 
     // Validate track_id format (alphanumeric, hyphens, underscores)
-    if !track_id.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !track_id
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("track_id contains invalid characters".to_string());
     }
 

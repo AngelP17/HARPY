@@ -1,0 +1,16 @@
+target/
+.git/
+.github/
+*.md
+!README.md
+.env
+.env.*
+node_modules/
+apps/web/.next/
+apps/web/out/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+postgres_data/
+redis_data/

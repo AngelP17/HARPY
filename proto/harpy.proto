@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package harpy.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Main wrapper for all streaming messages
+message Envelope {
+  string schema_version = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  
+  oneof payload {
+    // Server -> Client
+    TrackDeltaBatch track_delta_batch = 10;
+    AlertUpsert alert_upsert = 11;
+    ProviderStatus provider_status = 12;
+    SnapshotMeta snapshot_meta = 13;
+    LinkUpsert link_upsert = 14;
+
+    // Client -> Server
+    SubscriptionRequest subscription_request = 20;
+    SeekRequest seek_request = 21;
+  }
+}
+
+// Client Subscription
+message SubscriptionRequest {
+  repeated string layers = 1;
+  Viewport viewport = 2;
+  bool live = 3;
+}
+
+message Viewport {
+  double min_lat = 1;
+  double min_lon = 2;
+  double max_lat = 3;
+  double max_lon = 4;
+}
+
+// Playback Seek
+message SeekRequest {
+  int64 target_ts_ms = 1;
+  float playback_rate = 2;
+}
+
+// ... rest of the file ...
+message TrackDeltaBatch {
+  repeated TrackDelta deltas = 1;
+}
+
+message TrackDelta {
+  string id = 1;
+  double lat = 2;
+  double lon = 3;
+  float alt = 4;
+  float heading = 5;
+  float speed = 6;
+  TrackKind kind = 7;
+  uint32 color_rgba = 8;
+  int64 ts_ms = 9;
+}
+
+enum TrackKind {
+  TRACK_KIND_UNSPECIFIED = 0;
+  TRACK_KIND_AIRCRAFT = 1;
+  TRACK_KIND_SATELLITE = 2;
+  TRACK_KIND_GROUND = 3;
+  TRACK_KIND_VESSEL = 4;
+  TRACK_KIND_SENSOR = 5;
+}
+
+message AlertUpsert {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  AlertSeverity severity = 4;
+  int64 ts_ms = 5;
+  repeated string evidence_link_ids = 6;
+}
+
+enum AlertSeverity {
+  ALERT_SEVERITY_INFO = 0;
+  ALERT_SEVERITY_LOW = 1;
+  ALERT_SEVERITY_MEDIUM = 2;
+  ALERT_SEVERITY_HIGH = 3;
+  ALERT_SEVERITY_CRITICAL = 4;
+}
+
+message ProviderStatus {
+  string provider_id = 1;
+  string circuit_state = 2; // ENUM as string for JSON fallback/flexibility if needed, or stick to actual ENUM
+  string freshness = 3;
+  float latency_ms = 4;
+}
+
+message SnapshotMeta {
+  string snapshot_id = 1;
+  int64 start_ts_ms = 2;
+  int64 end_ts_ms = 3;
+  repeated string layer_ids = 4;
+}
+
+message LinkUpsert {
+  string id = 1;
+  EntityRef from = 2;
+  string rel = 3;
+  EntityRef to = 4;
+  int64 ts_ms = 5;
+}
+
+message EntityRef {
+  EntityType type = 1;
+  string id = 2;
+}
+
+enum EntityType {
+  ENTITY_TYPE_TRACK = 0;
+  ENTITY_TYPE_SENSOR = 1;
+  ENTITY_TYPE_DETECTION = 2;
+  ENTITY_TYPE_ALERT = 3;
+}

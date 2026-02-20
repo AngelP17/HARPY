@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../base
+
+patches:
+  - target:
+      kind: Deployment
+      labelSelector: "harpy/component"
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          workload-profile: govcloud
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: govcloud
+            operator: Equal
+            value: "true"
+            effect: NoSchedule
+      - op: add
+        path: /spec/template/spec/securityContext
+        value:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault

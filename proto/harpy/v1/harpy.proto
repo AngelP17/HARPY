@@ -1,0 +1,208 @@
+syntax = "proto3";
+package harpy.v1;
+
+// ========================================
+// Envelope (top-level message wrapper)
+// ========================================
+
+message Envelope {
+  string schema_version = 1; // Semantic version: "1.0.0"
+  uint64 server_ts_ms = 2;   // Server timestamp (epoch milliseconds)
+
+  oneof payload {
+    TrackDeltaBatch track_delta_batch = 10;
+    AlertUpsert alert_upsert = 11;
+    ProviderStatus provider_status = 12;
+    SnapshotMeta snapshot_meta = 13;
+    LinkUpsert link_upsert = 14;
+    SubscriptionRequest subscription_request = 20;
+    SubscriptionAck subscription_ack = 21;
+  }
+}
+
+// ========================================
+// Track Delta (Position Updates)
+// ========================================
+
+message TrackDeltaBatch {
+  repeated TrackDelta deltas = 1;
+}
+
+message TrackDelta {
+  string id = 1;              // Unique track identifier
+  TrackKind kind = 2;
+  Position position = 3;
+  double heading = 4;         // Degrees (0-360)
+  double speed = 5;           // Meters per second
+  uint64 ts_ms = 6;           // Observation timestamp (epoch ms)
+  string provider_id = 7;     // Source provider
+  map<string, string> meta = 8; // Optional metadata (callsign, altitude, etc.)
+}
+
+enum TrackKind {
+  TRACK_KIND_UNSPECIFIED = 0;
+  TRACK_KIND_AIRCRAFT = 1;
+  TRACK_KIND_SATELLITE = 2;
+  TRACK_KIND_GROUND = 3;
+  TRACK_KIND_VESSEL = 4;
+}
+
+message Position {
+  double lat = 1;  // WGS84 latitude
+  double lon = 2;  // WGS84 longitude
+  double alt = 3;  // Altitude in meters (MSL or AGL per provider)
+}
+
+// ========================================
+// Alerts
+// ========================================
+
+message AlertUpsert {
+  string id = 1;
+  AlertSeverity severity = 2;
+  string title = 3;
+  string description = 4;
+  uint64 ts_ms = 5;           // Alert creation time
+  repeated string evidence_link_ids = 6; // Link IDs forming evidence chain
+  AlertStatus status = 7;
+  map<string, string> meta = 8;
+}
+
+enum AlertSeverity {
+  ALERT_SEVERITY_UNSPECIFIED = 0;
+  ALERT_SEVERITY_INFO = 1;
+  ALERT_SEVERITY_WARNING = 2;
+  ALERT_SEVERITY_CRITICAL = 3;
+}
+
+enum AlertStatus {
+  ALERT_STATUS_UNSPECIFIED = 0;
+  ALERT_STATUS_ACTIVE = 1;
+  ALERT_STATUS_RESOLVED = 2;
+  ALERT_STATUS_ACKNOWLEDGED = 3;
+}
+
+// ========================================
+// Provider Health/Status
+// ========================================
+
+message ProviderStatus {
+  string provider_id = 1;
+  CircuitState circuit_state = 2;
+  Freshness freshness = 3;
+  uint64 last_success_ts_ms = 4;
+  uint32 failure_count = 5;
+  optional string error_message = 6;
+  map<string, string> meta = 7; // Rate limit info, etc.
+}
+
+enum CircuitState {
+  CIRCUIT_STATE_UNSPECIFIED = 0;
+  CIRCUIT_STATE_CLOSED = 1;
+  CIRCUIT_STATE_OPEN = 2;
+  CIRCUIT_STATE_HALF_OPEN = 3;
+}
+
+enum Freshness {
+  FRESHNESS_UNSPECIFIED = 0;
+  FRESHNESS_FRESH = 1;
+  FRESHNESS_AGING = 2;
+  FRESHNESS_STALE = 3;
+  FRESHNESS_CRITICAL = 4;
+}
+
+// ========================================
+// Snapshots (Playback)
+// ========================================
+
+message SnapshotMeta {
+  string snapshot_id = 1;
+  uint64 start_ts_ms = 2;
+  uint64 end_ts_ms = 3;
+  string s3_url = 4;          // Object storage URL
+  uint64 track_count = 5;
+  uint64 compressed_size_bytes = 6;
+}
+
+// ========================================
+// Links (Ontology Edges)
+// ========================================
+
+message LinkUpsert {
+  string id = 1;
+  NodeRef from = 2;
+  string rel = 3;             // Relationship type
+  NodeRef to = 4;
+  uint64 ts_ms = 5;
+  map<string, string> meta = 6;
+}
+
+message NodeRef {
+  NodeType node_type = 1;
+  string node_id = 2;
+}
+
+enum NodeType {
+  NODE_TYPE_UNSPECIFIED = 0;
+  NODE_TYPE_TRACK = 1;
+  NODE_TYPE_SENSOR = 2;
+  NODE_TYPE_DETECTION = 3;
+  NODE_TYPE_ALERT = 4;
+}
+
+// ========================================
+// Client Subscription
+// ========================================
+
+message SubscriptionRequest {
+  BoundingBox viewport = 1;
+  repeated LayerType layers = 2;
+  TimeRange time_range = 3;
+  SubscriptionMode mode = 4;
+}
+
+message BoundingBox {
+  double min_lat = 1;
+  double min_lon = 2;
+  double max_lat = 3;
+  double max_lon = 4;
+}
+
+enum LayerType {
+  LAYER_TYPE_UNSPECIFIED = 0;
+  LAYER_TYPE_AIRCRAFT = 1;
+  LAYER_TYPE_SATELLITE = 2;
+  LAYER_TYPE_GROUND = 3;
+  LAYER_TYPE_VESSEL = 4;
+  LAYER_TYPE_CAMERA = 5;
+  LAYER_TYPE_DETECTION = 6;
+  LAYER_TYPE_ALERT = 7;
+}
+
+message TimeRange {
+  oneof range {
+    LiveMode live = 1;
+    PlaybackMode playback = 2;
+  }
+}
+
+message LiveMode {
+  // Empty for now, signals live mode
+}
+
+message PlaybackMode {
+  uint64 start_ts_ms = 1;
+  uint64 end_ts_ms = 2;
+}
+
+enum SubscriptionMode {
+  SUBSCRIPTION_MODE_UNSPECIFIED = 0;
+  SUBSCRIPTION_MODE_LIVE = 1;
+  SUBSCRIPTION_MODE_PLAYBACK = 2;
+}
+
+message SubscriptionAck {
+  string subscription_id = 1;
+  bool success = 2;
+  optional string error = 3;
+}

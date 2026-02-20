@@ -1,0 +1,69 @@
+{{- $ns := default .Release.Namespace .Values.namespaceOverride -}}
+{{- range $name, $svc := .Values.services }}
+{{- if $svc.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "harpy.fullname" $ }}-{{ $name }}
+  namespace: {{ $ns }}
+spec:
+  replicas: {{ $svc.replicas }}
+  selector:
+    matchLabels:
+      app: {{ include "harpy.fullname" $ }}-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "harpy.fullname" $ }}-{{ $name }}
+        harpy/component: {{ $name }}
+    spec:
+      serviceAccountName: {{ $.Values.serviceAccount.name }}
+      {{- if $.Values.govcloud.enabled }}
+      nodeSelector:
+{{ toYaml $.Values.govcloud.nodeSelector | indent 8 }}
+      tolerations:
+{{ toYaml $.Values.govcloud.tolerations | indent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ $svc.image }}
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ $svc.port }}
+              name: http
+          env:
+            - name: RUST_LOG
+              value: {{ $.Values.global.rustLog | quote }}
+            - name: ENFORCE_AUTH
+              value: {{ $.Values.global.enforceAuth | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "harpy.fullname" $ }}-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "harpy.fullname" $ }}-secrets
+                  key: JWT_SECRET
+          {{- range $k, $v := $svc.env }}
+            - name: {{ $k }}
+              value: {{ tpl $v $ | quote }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+{{- end }}
+{{- end }}

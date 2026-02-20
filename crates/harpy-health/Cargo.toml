@@ -1,0 +1,6 @@
+[package]
+name = "harpy-health"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]

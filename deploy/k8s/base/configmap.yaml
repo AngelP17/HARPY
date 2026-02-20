@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harpy-config
+data:
+  RUST_LOG: info
+  ENFORCE_AUTH: "true"
+  FUSION_H3_RESOLUTION: "8"
+  FUSION_ALERT_DEDUP_TTL_MS: "300000"
+  GRAPH_URL: http://harpy-graph:8083

@@ -1,0 +1,74 @@
+[workspace]
+members = [
+    "services/harpy-relay",
+    "services/harpy-ingest",
+    "services/harpy-fusion",
+    "services/harpy-graph",
+    "services/harpy-aip",
+    "crates/harpy-proto",
+    "crates/harpy-core",
+    "crates/harpy-health",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["Angel L. Pinzon"]
+license = "Proprietary"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+tokio-util = "0.7"
+
+# Web framework
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Protobuf
+prost = "0.12"
+prost-types = "0.12"
+tonic = { version = "0.10", features = ["prost"] }
+tonic-build = "0.10"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging & observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+metrics = "0.21"
+metrics-exporter-prometheus = "0.13"
+
+# Security
+jsonwebtoken = "9.2"
+bcrypt = "0.15"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+url = "2.5"
+bytes = "1.5"
+futures = "0.3"
+dashmap = "5.5"
+h3o = "0.6"
+reqwest = { version = "0.11", features = ["json"] }
+
+# Testing
+mockall = "0.12"
+async-trait = "0.1"
+
+# Compression
+zstd = "0.13"

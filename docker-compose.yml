@@ -1,0 +1,221 @@
+services:
+  # Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: harpy-postgres
+    environment:
+      POSTGRES_USER: harpy
+      POSTGRES_PASSWORD: harpy
+      POSTGRES_DB: harpy
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harpy -d harpy"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Cache & Hot State
+  redis:
+    image: redis:7-alpine
+    container_name: harpy-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Object Storage (S3 Mock for local)
+  minio:
+    image: minio/minio
+    container_name: harpy-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: harpy
+      MINIO_ROOT_PASSWORD: harpy_minio_secret
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # WebSocket Relay Service
+  harpy-relay:
+    build:
+      context: .
+      dockerfile: services/harpy-relay/Dockerfile
+    container_name: harpy-relay
+    ports:
+      - "8080:8080"
+    environment:
+      - WS_PORT=8080
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Data Ingestion Service
+  harpy-ingest:
+    build:
+      context: .
+      dockerfile: services/harpy-ingest/Dockerfile
+    container_name: harpy-ingest
+    ports:
+      - "8081:8081"
+    environment:
+      - HTTP_PORT=${INGEST_HTTP_PORT:-8081}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - DATABASE_URL=${DATABASE_URL:-postgres://harpy:harpy@postgres:5432/harpy}
+      # Feature flags (defaults keep local/dev fully offline with mock data)
+      - ENABLE_REAL_ADSB=${ENABLE_REAL_ADSB:-false}
+      - ENABLE_REAL_TLE=${ENABLE_REAL_TLE:-false}
+      - ENABLE_REAL_SEISMIC=${ENABLE_REAL_SEISMIC:-false}
+      - ENABLE_REAL_WEATHER_NWS=${ENABLE_REAL_WEATHER_NWS:-false}
+      - ENABLE_REAL_RADAR_NEXRAD=${ENABLE_REAL_RADAR_NEXRAD:-false}
+
+      # OpenSky (real ADS-B)
+      - OPENSKY_BASE_URL=${OPENSKY_BASE_URL:-https://opensky-network.org}
+      - OPENSKY_AUTH_URL=${OPENSKY_AUTH_URL:-https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token}
+      # Leave blank to run OpenSky in anonymous mode (lower limits).
+      - OPENSKY_CLIENT_ID=${OPENSKY_CLIENT_ID:-}
+      - OPENSKY_CLIENT_SECRET=${OPENSKY_CLIENT_SECRET:-}
+      - OPENSKY_ANON_MIN_INTERVAL_SECS=${OPENSKY_ANON_MIN_INTERVAL_SECS:-300}
+      - OPENSKY_MAX_TRACKS=${OPENSKY_MAX_TRACKS:-500}
+      # Optional ADS-B bbox filter
+      # - ADSB_MIN_LAT=24.0
+      # - ADSB_MIN_LON=-125.0
+      # - ADSB_MAX_LAT=49.0
+      # - ADSB_MAX_LON=-66.0
+
+      # CelesTrak (real TLE/OMM)
+      - CELESTRAK_BASE_URL=${CELESTRAK_BASE_URL:-https://celestrak.org}
+      - CELESTRAK_GROUP=${CELESTRAK_GROUP:-STATIONS}
+      - CELESTRAK_MAX_TRACKS=${CELESTRAK_MAX_TRACKS:-200}
+      - CELESTRAK_MIN_REFRESH_SECS=${CELESTRAK_MIN_REFRESH_SECS:-7200}
+      - CELESTRAK_USER_AGENT=${CELESTRAK_USER_AGENT:-HARPY/0.1 (+https://example.invalid)}
+
+      # USGS (real seismic events)
+      - USGS_QUERY_URL=${USGS_QUERY_URL:-https://earthquake.usgs.gov/fdsnws/event/1/query}
+      - USGS_MIN_MAGNITUDE=${USGS_MIN_MAGNITUDE:-2.5}
+      - USGS_LOOKBACK_MINUTES=${USGS_LOOKBACK_MINUTES:-180}
+      - USGS_MAX_RESULTS=${USGS_MAX_RESULTS:-250}
+      # Optional seismic bbox filter
+      # - SEISMIC_MIN_LAT=24.0
+      # - SEISMIC_MIN_LON=-125.0
+      # - SEISMIC_MAX_LAT=49.0
+      # - SEISMIC_MAX_LON=-66.0
+
+      # NWS weather (real forecast points)
+      - NWS_BASE_URL=${NWS_BASE_URL:-https://api.weather.gov}
+      - "NWS_USER_AGENT=${NWS_USER_AGENT:-HARPY/0.1 (contact@example.com)}"
+      - NWS_POINTS=${NWS_POINTS:-37.7749,-122.4194;34.0522,-118.2437;40.7128,-74.0060}
+      - NWS_MAX_POINTS=${NWS_MAX_POINTS:-10}
+
+      # NEXRAD radar (real Level II bucket + NWS station metadata)
+      - NEXRAD_BUCKET_URL=${NEXRAD_BUCKET_URL:-https://unidata-nexrad-level2-chunks.s3.amazonaws.com}
+      - NEXRAD_STATIONS_URL=${NEXRAD_STATIONS_URL:-https://api.weather.gov/radar/stations}
+      - "NEXRAD_USER_AGENT=${NEXRAD_USER_AGENT:-HARPY/0.1 (contact@example.com)}"
+      - NEXRAD_STATIONS=${NEXRAD_STATIONS:-KABR,KTLX,KATX,KAMX,KDGX}
+      - NEXRAD_MAX_KEYS_PER_STATION=${NEXRAD_MAX_KEYS_PER_STATION:-400}
+
+      - ADSB_POLL_INTERVAL_SECS=${ADSB_POLL_INTERVAL_SECS:-5}
+      - TLE_POLL_INTERVAL_SECS=${TLE_POLL_INTERVAL_SECS:-60}
+      - SEISMIC_POLL_INTERVAL_SECS=${SEISMIC_POLL_INTERVAL_SECS:-300}
+      - WEATHER_POLL_INTERVAL_SECS=${WEATHER_POLL_INTERVAL_SECS:-300}
+      - NEXRAD_POLL_INTERVAL_SECS=${NEXRAD_POLL_INTERVAL_SECS:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Fusion / Rules Engine Service
+  harpy-fusion:
+    build:
+      context: .
+      dockerfile: services/harpy-fusion/Dockerfile
+    container_name: harpy-fusion
+    ports:
+      - "8082:8082"
+    environment:
+      - HTTP_PORT=8082
+      - DATABASE_URL=postgres://harpy:harpy@postgres:5432/harpy
+      - FUSION_H3_RESOLUTION=8
+      - FUSION_ALERT_DEDUP_TTL_MS=300000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Graph Query Service
+  harpy-graph:
+    build:
+      context: .
+      dockerfile: services/harpy-graph/Dockerfile
+    container_name: harpy-graph
+    ports:
+      - "8083:8083"
+    environment:
+      - HTTP_PORT=8083
+      - DATABASE_URL=postgres://harpy:harpy@postgres:5432/harpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # AI Platform Service
+  harpy-aip:
+    build:
+      context: .
+      dockerfile: services/harpy-aip/Dockerfile
+    container_name: harpy-aip
+    ports:
+      - "8084:8084"
+    environment:
+      - HTTP_PORT=8084
+      - DATABASE_URL=postgres://harpy:harpy@postgres:5432/harpy
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

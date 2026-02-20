@@ -1,0 +1,72 @@
+namespaceOverride: ""
+
+global:
+  imagePullPolicy: IfNotPresent
+  rustLog: info
+  enforceAuth: true
+
+serviceAccount:
+  create: true
+  name: harpy-runtime
+
+rbac:
+  create: true
+
+networkPolicy:
+  enabled: true
+
+services:
+  relay:
+    enabled: true
+    image: ghcr.io/harpy/harpy-relay:latest
+    replicas: 2
+    port: 8080
+    env:
+      WS_PORT: "8080"
+      REDIS_URL: redis://redis:6379
+  ingest:
+    enabled: true
+    image: ghcr.io/harpy/harpy-ingest:latest
+    replicas: 2
+    port: 8081
+    env:
+      HTTP_PORT: "8081"
+      REDIS_URL: redis://redis:6379
+  fusion:
+    enabled: true
+    image: ghcr.io/harpy/harpy-fusion:latest
+    replicas: 2
+    port: 8082
+    env:
+      HTTP_PORT: "8082"
+      FUSION_H3_RESOLUTION: "8"
+      FUSION_ALERT_DEDUP_TTL_MS: "300000"
+  graph:
+    enabled: true
+    image: ghcr.io/harpy/harpy-graph:latest
+    replicas: 2
+    port: 8083
+    env:
+      HTTP_PORT: "8083"
+  aip:
+    enabled: true
+    image: ghcr.io/harpy/harpy-aip:latest
+    replicas: 2
+    port: 8084
+    env:
+      HTTP_PORT: "8084"
+      GRAPH_URL: http://{{ include "harpy.fullname" . }}-graph:8083
+
+secrets:
+  DATABASE_URL: ""
+  JWT_SECRET: ""
+
+govcloud:
+  enabled: false
+  nodeSelector:
+    workload-profile: govcloud
+  tolerations:
+    - key: govcloud
+      operator: Equal
+      value: "true"
+      effect: NoSchedule

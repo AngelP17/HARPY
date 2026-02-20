@@ -1,0 +1,11 @@
+[package]
+name = "harpy-proto"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+prost.workspace = true
+prost-types.workspace = true
+
+[build-dependencies]
+tonic-build.workspace = true

@@ -1,0 +1,255 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harpy-relay
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harpy-relay
+  template:
+    metadata:
+      labels:
+        app: harpy-relay
+        harpy/component: relay
+    spec:
+      serviceAccountName: harpy-runtime
+      containers:
+        - name: harpy-relay
+          image: ghcr.io/harpy/harpy-relay:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - configMapRef:
+                name: harpy-config
+          env:
+            - name: WS_PORT
+              value: "8080"
+            - name: REDIS_URL
+              value: redis://redis:6379
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harpy-ingest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harpy-ingest
+  template:
+    metadata:
+      labels:
+        app: harpy-ingest
+        harpy/component: ingest
+    spec:
+      serviceAccountName: harpy-runtime
+      containers:
+        - name: harpy-ingest
+          image: ghcr.io/harpy/harpy-ingest:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+          envFrom:
+            - configMapRef:
+                name: harpy-config
+          env:
+            - name: HTTP_PORT
+              value: "8081"
+            - name: REDIS_URL
+              value: redis://redis:6379
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: DATABASE_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harpy-fusion
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harpy-fusion
+  template:
+    metadata:
+      labels:
+        app: harpy-fusion
+        harpy/component: fusion
+    spec:
+      serviceAccountName: harpy-runtime
+      containers:
+        - name: harpy-fusion
+          image: ghcr.io/harpy/harpy-fusion:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8082
+              name: http
+          envFrom:
+            - configMapRef:
+                name: harpy-config
+          env:
+            - name: HTTP_PORT
+              value: "8082"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: DATABASE_URL
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harpy-graph
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harpy-graph
+  template:
+    metadata:
+      labels:
+        app: harpy-graph
+        harpy/component: graph
+    spec:
+      serviceAccountName: harpy-runtime
+      containers:
+        - name: harpy-graph
+          image: ghcr.io/harpy/harpy-graph:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8083
+              name: http
+          envFrom:
+            - configMapRef:
+                name: harpy-config
+          env:
+            - name: HTTP_PORT
+              value: "8083"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: JWT_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: harpy-aip
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: harpy-aip
+  template:
+    metadata:
+      labels:
+        app: harpy-aip
+        harpy/component: aip
+    spec:
+      serviceAccountName: harpy-runtime
+      containers:
+        - name: harpy-aip
+          image: ghcr.io/harpy/harpy-aip:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8084
+              name: http
+          envFrom:
+            - configMapRef:
+                name: harpy-config
+          env:
+            - name: HTTP_PORT
+              value: "8084"
+            - name: GRAPH_URL
+              value: http://harpy-graph:8083
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: DATABASE_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: harpy-secrets
+                  key: JWT_SECRET
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http

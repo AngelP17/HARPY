@@ -1,0 +1,13 @@
+{
+  "name": "harpy",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "protobufjs": "^7.5.4",
+    "protobufjs-cli": "^2.0.0",
+    "ts-proto": "^2.11.2"
+  }
+}

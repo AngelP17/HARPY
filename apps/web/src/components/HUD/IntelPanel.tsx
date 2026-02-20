@@ -85,8 +85,6 @@ const IntelPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const aipUrl = process.env.NEXT_PUBLIC_AIP_URL || "http://localhost:8084";
-
   const sentimentBadgeClass = useMemo(
     () =>
       clsx(styles.freshnessBadge, {
@@ -101,8 +99,8 @@ const IntelPanel: React.FC = () => {
   const refreshIntel = useCallback(async () => {
     try {
       const [newsResponse, marketResponse] = await Promise.all([
-        fetch(`${aipUrl}/intel/news`, { cache: "no-store" }),
-        fetch(`${aipUrl}/intel/market`, { cache: "no-store" }),
+        fetch("/api/intel/news", { cache: "no-store" }),
+        fetch("/api/intel/market", { cache: "no-store" }),
       ]);
 
       if (!newsResponse.ok || !marketResponse.ok) {
@@ -123,7 +121,7 @@ const IntelPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [aipUrl]);
+  }, []);
 
   useEffect(() => {
     void refreshIntel();

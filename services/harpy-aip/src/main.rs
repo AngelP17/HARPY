@@ -16,6 +16,7 @@ use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -185,6 +186,12 @@ async fn main() -> anyhow::Result<()> {
         .route("/aip/tools", get(list_tools))
         .route("/aip/query", post(aip_query))
         .with_state(state)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

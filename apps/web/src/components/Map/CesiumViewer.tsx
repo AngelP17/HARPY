@@ -108,18 +108,12 @@ const resolveStreamMode = (): StreamMode => {
   return "hybrid";
 };
 
-const resolveRelayHttpBase = (wsUrl: string): string => {
-  const envBase = process.env.NEXT_PUBLIC_RELAY_HTTP_URL;
-  if (envBase) {
-    return envBase;
+const resolveRelayDebugSnapshotUrl = (): string => {
+  const envUrl = process.env.NEXT_PUBLIC_RELAY_DEBUG_SNAPSHOT_URL;
+  if (envUrl) {
+    return envUrl;
   }
-  if (wsUrl.startsWith("ws://")) {
-    return wsUrl.replace("ws://", "http://").replace(/\/ws$/, "");
-  }
-  if (wsUrl.startsWith("wss://")) {
-    return wsUrl.replace("wss://", "https://").replace(/\/ws$/, "");
-  }
-  return "http://localhost:8080";
+  return "/api/relay/debug/snapshot";
 };
 
 const isProviderStatusMessage = (data: unknown): data is DecodedProviderStatusMessage => {
@@ -496,6 +490,9 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     const mapMode = (process.env.NEXT_PUBLIC_MAP_MODE || "").toLowerCase();
     const forceOfflineMap = mapMode === "offline" || mockOnlyMode;
+    const osmTileUrl = process.env.NEXT_PUBLIC_OSM_TILE_URL || "/api/tiles/osm/";
+    const parsedOsmMaxLevel = Number.parseInt(process.env.NEXT_PUBLIC_OSM_MAX_LEVEL || "19", 10);
+    const osmMaximumLevel = Number.isFinite(parsedOsmMaxLevel) ? parsedOsmMaxLevel : 19;
     const viewerOptions: Cesium.Viewer.ConstructorOptions = {
       animation: false,
       baseLayerPicker: false,
@@ -517,7 +514,8 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         ? false
         : new Cesium.ImageryLayer(
             new Cesium.OpenStreetMapImageryProvider({
-              url: process.env.NEXT_PUBLIC_OSM_TILE_URL || "https://tile.openstreetmap.org/",
+              url: osmTileUrl,
+              maximumLevel: osmMaximumLevel,
               credit: "© OpenStreetMap contributors",
             }),
           ),
@@ -695,7 +693,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     // Setup Real WebSocket
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
-    const relayHttpBase = resolveRelayHttpBase(wsUrl);
+    const relayDebugSnapshotUrl = resolveRelayDebugSnapshotUrl();
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let connectAttempt = 0;
 
@@ -771,13 +769,24 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     streamer?.start();
 
     let debugPollTimer: ReturnType<typeof setInterval> | null = null;
+    let debugSnapshotUnavailable = false;
     if (useWebSocket) {
       debugPollTimer = setInterval(async () => {
+        if (debugSnapshotUnavailable) {
+          return;
+        }
         try {
-          const response = await fetch(`${relayHttpBase}/api/debug/snapshot`, {
+          const response = await fetch(relayDebugSnapshotUrl, {
             method: "GET",
             cache: "no-store",
           });
+          if (response.status === 404 || response.status === 405) {
+            debugSnapshotUnavailable = true;
+            console.warn(
+              `[DATA_PLANE] Debug snapshot endpoint unavailable (${response.status}); disabling snapshot polling.`,
+            );
+            return;
+          }
           if (!response.ok) {
             return;
           }

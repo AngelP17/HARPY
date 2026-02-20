@@ -13,7 +13,6 @@ import {
   Save,
   Shield,
   SlidersHorizontal,
-  Sparkles,
 } from "lucide-react";
 import styles from "./HUD.module.css";
 import { clsx } from "clsx";
@@ -258,9 +257,6 @@ const HUD: React.FC = () => {
     <div className="hud-overlay">
       <div className={clsx("hud-panel", styles.topBar)}>
         <div className={styles.logoWrap}>
-          <div className={styles.logoBadge}>
-            <Sparkles size={13} />
-          </div>
           <div className={styles.logoTextBlock}>
             <span className={styles.logoKicker}>Geospatial Intelligence Fusion</span>
             <span className={styles.logoTitle}>HARPY / Operator Console</span>

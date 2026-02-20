@@ -2,6 +2,7 @@
 
 interface Track {
   id: string;
+  providerId: string;
   lat: number;
   lon: number;
   alt: number;
@@ -30,12 +31,16 @@ const packTracks = (tracks: Track[]) => {
   const speeds = new Float32Array(N);
   const kinds = new Uint8Array(N);
   const colors = new Uint32Array(N); // Store RGBA in 32bit or 4x8bit
+  const ids: string[] = new Array(N);
+  const providerIds: string[] = new Array(N);
   
   // Note: For id_table mapping, we'll keep it simple for now
   // and send the string IDs separately if needed
   
   for (let i = 0; i < N; i++) {
     const t = tracks[i];
+    ids[i] = t.id;
+    providerIds[i] = t.providerId;
     positions[i * 3 + 0] = t.lat;
     positions[i * 3 + 1] = t.lon;
     positions[i * 3 + 2] = t.alt;
@@ -53,6 +58,8 @@ const packTracks = (tracks: Track[]) => {
     speeds: speeds.buffer,
     kinds: kinds.buffer,
     colors: colors.buffer,
+    ids,
+    providerIds,
     count: N,
   };
   

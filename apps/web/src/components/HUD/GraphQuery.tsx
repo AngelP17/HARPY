@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { X, Database, Play } from "lucide-react";
 import styles from "./HUD.module.css";
 import { useStore } from "@/store/useStore";
@@ -23,10 +23,28 @@ const GraphQuery: React.FC = () => {
   const [results, setResults] = useState<GraphQueryResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
+  const isOfflineMode = streamMode === "offline";
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowGraphQuery(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [setShowGraphQuery]);
 
   if (!showGraphQuery) return null;
 
   const handleRun = async () => {
+    if (isOfflineMode) {
+      setError("Graph query is disabled in offline mode.");
+      setResults(null);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setResults(null);
@@ -62,8 +80,8 @@ const GraphQuery: React.FC = () => {
   };
 
   return (
-    <div className={styles.modalOverlay}>
-      <div className={styles.graphModal}>
+    <div className={styles.modalOverlay} onClick={() => setShowGraphQuery(false)}>
+      <div className={styles.graphModal} onClick={(event) => event.stopPropagation()}>
         <div className={styles.modalHeader}>
           <div className={styles.modalTitle}>
             <Database size={16} />
@@ -111,7 +129,8 @@ const GraphQuery: React.FC = () => {
             <button 
               className={styles.runButton}
               onClick={handleRun}
-              disabled={loading}
+              disabled={loading || isOfflineMode}
+              title={isOfflineMode ? "Graph service disabled in offline mode" : undefined}
             >
               {loading ? "EXECUTING..." : "RUN_QUERY"}
               {!loading && <Play size={12} />}

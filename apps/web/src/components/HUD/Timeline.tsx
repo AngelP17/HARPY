@@ -15,7 +15,14 @@ const Timeline: React.FC = () => {
   const setPlaybackRate = useStore((state) => state.setPlaybackRate);
   const currentTimeMs = useStore((state) => state.currentTimeMs);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
-  const [scrubWindowEndMs, setScrubWindowEndMs] = useState<number>(currentTimeMs);
+  const [scrubWindowEndMs, setScrubWindowEndMs] = useState<number>(0);
+
+  useEffect(() => {
+    if (currentTimeMs <= 0) {
+      const now = Date.now();
+      setCurrentTimeMs(now);
+    }
+  }, [currentTimeMs, setCurrentTimeMs]);
 
   // Update time when playing
   useEffect(() => {
@@ -52,8 +59,16 @@ const Timeline: React.FC = () => {
   };
 
   const formatTime = (ms: number) => {
+    if (ms <= 0) {
+      return "--:--:--";
+    }
     return new Date(ms).toISOString().replace("T", " ").substring(0, 19);
   };
+
+  const effectiveScrubWindowEndMs = scrubWindowEndMs > 0 ? scrubWindowEndMs : currentTimeMs;
+  const currentMs = currentTimeMs > 0 ? currentTimeMs : effectiveScrubWindowEndMs;
+  const windowEndMs = isLive ? currentMs : effectiveScrubWindowEndMs;
+  const windowStartMs = Math.max(0, windowEndMs - 3_600_000);
 
   return (
     <div className={clsx("hud-panel", styles.timelineBar)}>
@@ -76,9 +91,9 @@ const Timeline: React.FC = () => {
             <input 
               type="range" 
               className={styles.scrubber} 
-              min={(isLive ? currentTimeMs : scrubWindowEndMs) - 3600000}
-              max={isLive ? currentTimeMs : scrubWindowEndMs}
-              value={currentTimeMs}
+              min={windowStartMs}
+              max={windowEndMs}
+              value={currentMs}
               onChange={(e) => {
                 setIsLive(false);
                 setCurrentTimeMs(Number(e.target.value));

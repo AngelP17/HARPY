@@ -2,6 +2,7 @@
 
 interface Track {
   id: string;
+  providerId: string;
   lat: number;
   lon: number;
   alt: number;
@@ -37,6 +38,7 @@ workerCtx.onmessage = (event: MessageEvent) => {
     for (const delta of deltas) {
       const normalized: Track = {
         id: delta.id,
+        providerId: delta.providerId ?? delta.provider_id ?? "unknown",
         lat: delta.position?.lat ?? 0,
         lon: delta.position?.lon ?? 0,
         alt: delta.position?.alt ?? 0,

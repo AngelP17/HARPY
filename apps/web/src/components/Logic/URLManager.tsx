@@ -30,7 +30,15 @@ const URLManager: React.FC = () => {
       if (vMode) setVisionMode(vMode as VisionMode);
 
       const l = params.get("l");
-      if (l) useStore.setState({ layers: l.split(",") });
+      if (l !== null) {
+        const parsedLayers = l
+          .split(",")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry.length > 0);
+        if (parsedLayers.length > 0) {
+          useStore.setState({ layers: parsedLayers });
+        }
+      }
 
       const live = params.get("live");
       if (live) setIsLive(live === "1");

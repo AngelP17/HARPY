@@ -1,3 +1,8 @@
+//! harpy-fusion: Fusion Rules Engine Service
+//!
+//! Implements convergence detection, anomaly detection, and pattern matching rules.
+//! Publishes alerts and links to Redis for relay fanout.
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -18,9 +23,19 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+mod rules;
+mod redis_publisher;
+mod redis_consumer;
+
+use rules::{RuleEngine, RuleResult};
+use redis_publisher::RedisPublisher;
+use redis_consumer::RedisConsumer;
+
 #[derive(Clone)]
 struct AppState {
     db_pool: Option<PgPool>,
+    redis_publisher: Option<RedisPublisher>,
+    rule_engine: Arc<RuleEngine>,
     h3_resolution: u8,
     dedup_ttl_ms: i64,
     dedup_cache: Arc<DashMap<String, i64>>,
@@ -31,7 +46,7 @@ struct FusionIngestRequest {
     tracks: Vec<TrackObservation>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct TrackObservation {
     id: String,
     kind: String,
@@ -73,8 +88,9 @@ struct LinkUpsertRecord {
 #[derive(Debug, Serialize)]
 struct FusionIngestResponse {
     processed_tracks: usize,
-    generated_alerts: Vec<AlertUpsertRecord>,
-    generated_links: Vec<LinkUpsertRecord>,
+    generated_alerts: usize,
+    generated_links: usize,
+    rules_triggered: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +98,20 @@ struct FusionConfigResponse {
     h3_resolution: u8,
     dedup_ttl_ms: i64,
     persistence_enabled: bool,
+    redis_enabled: bool,
+    rules: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct RulesStatusResponse {
+    rules: Vec<RuleStatus>,
+}
+
+#[derive(Debug, Serialize)]
+struct RuleStatus {
+    name: String,
+    enabled: bool,
+    trigger_count: u64,
 }
 
 #[tokio::main]
@@ -110,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(300_000)
         .max(1_000);
 
+    // Connect to database
     let db_pool = match std::env::var("DATABASE_URL") {
         Ok(url) => Some(
             PgPoolOptions::new()
@@ -123,24 +154,70 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Connect to Redis for alert publishing
+    let redis_publisher = match std::env::var("REDIS_URL") {
+        Ok(url) => match RedisPublisher::new(&url).await {
+            Ok(pub_) => {
+                tracing::info!("Connected to Redis for alert publishing");
+                Some(pub_)
+            }
+            Err(e) => {
+                tracing::warn!("Failed to connect to Redis: {}", e);
+                None
+            }
+        },
+        Err(_) => {
+            tracing::warn!("REDIS_URL is not set; alert publishing disabled");
+            None
+        }
+    };
+
+    // Initialize rule engine with all rules
+    let rule_engine = Arc::new(RuleEngine::new(h3_resolution));
+
     let state = AppState {
         db_pool,
+        redis_publisher,
+        rule_engine: rule_engine.clone(),
         h3_resolution,
         dedup_ttl_ms,
         dedup_cache: Arc::new(DashMap::new()),
     };
 
+    // Clone for Redis consumer before moving into router
+    let consumer_state = state.clone();
+    let consumer_rule_engine = rule_engine.clone();
+
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/fusion/config", get(fusion_config))
+        .route("/fusion/rules", get(rules_status))
         .route("/fusion/ingest", post(fusion_ingest))
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "harpy-fusion listening");
+    tracing::info!("Rules engine initialized with H3 resolution {}", h3_resolution);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    
+    // Start Redis consumer for automatic track processing
+    tokio::spawn(async move {
+        if let Some(redis_url) = std::env::var("REDIS_URL").ok() {
+            match RedisConsumer::new(&redis_url, consumer_state, consumer_rule_engine).await {
+                Ok(consumer) => {
+                    if let Err(e) = consumer.run().await {
+                        tracing::error!("Redis consumer error: {}", e);
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to create Redis consumer: {}", e);
+                }
+            }
+        }
+    });
+    
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -158,6 +235,14 @@ async fn fusion_config(State(state): State<AppState>) -> Json<FusionConfigRespon
         h3_resolution: state.h3_resolution,
         dedup_ttl_ms: state.dedup_ttl_ms,
         persistence_enabled: state.db_pool.is_some(),
+        redis_enabled: state.redis_publisher.is_some(),
+        rules: state.rule_engine.list_rules(),
+    })
+}
+
+async fn rules_status(State(state): State<AppState>) -> Json<RulesStatusResponse> {
+    Json(RulesStatusResponse {
+        rules: state.rule_engine.get_rule_status(),
     })
 }
 
@@ -168,19 +253,21 @@ async fn fusion_ingest(
     if req.tracks.is_empty() {
         return Ok(Json(FusionIngestResponse {
             processed_tracks: 0,
-            generated_alerts: Vec::new(),
-            generated_links: Vec::new(),
+            generated_alerts: 0,
+            generated_links: 0,
+            rules_triggered: Vec::new(),
         }));
     }
 
     let now_ms = now_ms();
     gc_dedup_cache(&state, now_ms);
 
-    let mut cell_buckets: HashMap<String, Vec<&TrackObservation>> = HashMap::new();
+    // Group tracks by H3 cell for spatial indexing
+    let mut cell_buckets: HashMap<String, Vec<TrackObservation>> = HashMap::new();
     for track in &req.tracks {
         match to_h3_cell(track.lat, track.lon, state.h3_resolution) {
             Ok(cell) => {
-                cell_buckets.entry(cell).or_default().push(track);
+                cell_buckets.entry(cell).or_default().push(track.clone());
             }
             Err(error) => {
                 tracing::warn!(track_id = %track.id, %error, "failed to compute H3 cell");
@@ -188,112 +275,68 @@ async fn fusion_ingest(
         }
     }
 
-    let mut generated_alerts = Vec::new();
-    let mut generated_links = Vec::new();
+    let mut all_alerts: Vec<AlertUpsertRecord> = Vec::new();
+    let mut all_links: Vec<LinkUpsertRecord> = Vec::new();
+    let mut rules_triggered: HashSet<String> = HashSet::new();
 
-    for (cell, tracks) in cell_buckets {
-        if tracks.len() < 2 {
-            continue;
-        }
+    // Run all rules against the tracks
+    let rule_results = state.rule_engine.evaluate(&req.tracks, &cell_buckets, now_ms).await;
 
-        let provider_count = tracks
-            .iter()
-            .map(|track| track.provider_id.clone())
-            .collect::<HashSet<_>>()
-            .len();
-
-        if provider_count < 2 {
-            continue;
-        }
-
-        for i in 0..tracks.len() {
-            for j in (i + 1)..tracks.len() {
-                let first = tracks[i];
-                let second = tracks[j];
-
-                let dedup_key = pair_dedup_key(&cell, &first.id, &second.id);
+    for result in rule_results {
+        match result {
+            RuleResult::Alert { alert, links } => {
+                // Check deduplication
+                let dedup_key = format!("{}:{}", alert.title, alert.description);
                 let should_skip = if let Some(last_seen) = state.dedup_cache.get(&dedup_key) {
                     now_ms - *last_seen < state.dedup_ttl_ms
                 } else {
                     false
                 };
+
                 if should_skip {
                     continue;
                 }
                 state.dedup_cache.insert(dedup_key, now_ms);
 
-                let link_association = LinkUpsertRecord {
-                    id: Uuid::new_v4().to_string(),
-                    from_type: "Track".to_string(),
-                    from_id: first.id.clone(),
-                    rel: "associated_with".to_string(),
-                    to_type: "Track".to_string(),
-                    to_id: second.id.clone(),
-                    ts_ms: now_ms,
-                    meta: json!({
-                        "rule": "co_cell_convergence",
-                        "cell": cell,
-                        "h3_resolution": state.h3_resolution,
-                        "providers": [first.provider_id.clone(), second.provider_id.clone()],
-                        "track_kinds": [first.kind.clone(), second.kind.clone()],
-                        "track_altitudes": [first.alt, second.alt],
-                        "track_headings": [first.heading, second.heading],
-                        "track_speeds": [first.speed, second.speed],
-                        "track_timestamps": [first.ts_ms, second.ts_ms],
-                        "track_meta": [first.meta.clone(), second.meta.clone()],
-                    }),
-                };
+                rules_triggered.insert(alert.meta.get("rule").and_then(|v| v.as_str()).unwrap_or("unknown").to_string());
 
-                let alert = AlertUpsertRecord {
-                    id: Uuid::new_v4().to_string(),
-                    severity: "MEDIUM".to_string(),
-                    title: "Convergence detected".to_string(),
-                    description: format!(
-                        "Tracks {} and {} converged in H3 cell {}",
-                        first.id, second.id, cell
-                    ),
-                    ts_ms: now_ms,
-                    status: "ACTIVE".to_string(),
-                    evidence_link_ids: vec![link_association.id.clone()],
-                    meta: json!({
-                        "rule": "h3_convergence_v1",
-                        "cell": cell,
-                        "h3_resolution": state.h3_resolution,
-                        "provider_count": provider_count,
-                        "dedup_ttl_ms": state.dedup_ttl_ms,
-                    }),
-                };
-
-                let alert_evidence = LinkUpsertRecord {
-                    id: Uuid::new_v4().to_string(),
-                    from_type: "Alert".to_string(),
-                    from_id: alert.id.clone(),
-                    rel: "is_evidenced_by".to_string(),
-                    to_type: "Track".to_string(),
-                    to_id: first.id.clone(),
-                    ts_ms: now_ms,
-                    meta: json!({ "source_link_id": link_association.id }),
-                };
-
-                generated_links.push(link_association.clone());
-                generated_links.push(alert_evidence.clone());
-                generated_alerts.push(alert);
+                all_alerts.push(alert);
+                all_links.extend(links);
+            }
+            RuleResult::Link(link) => {
+                all_links.push(link);
             }
         }
     }
 
-    if !generated_alerts.is_empty() {
+    // Publish alerts to Redis for relay fanout
+    if let Some(ref publisher) = state.redis_publisher {
+        for alert in &all_alerts {
+            if let Err(e) = publisher.publish_alert(alert).await {
+                tracing::warn!("Failed to publish alert to Redis: {}", e);
+            }
+        }
+        for link in &all_links {
+            if let Err(e) = publisher.publish_link(link).await {
+                tracing::warn!("Failed to publish link to Redis: {}", e);
+            }
+        }
+    }
+
+    // Persist to database
+    if !all_alerts.is_empty() {
         if let Some(pool) = &state.db_pool {
-            persist_fusion_outputs(pool, &generated_alerts, &generated_links)
-                .await
-                .map_err(internal_error)?;
+            if let Err(e) = persist_fusion_outputs(pool, &all_alerts, &all_links).await {
+                tracing::error!("Failed to persist fusion outputs: {}", e);
+            }
         }
     }
 
     Ok(Json(FusionIngestResponse {
         processed_tracks: req.tracks.len(),
-        generated_alerts,
-        generated_links,
+        generated_alerts: all_alerts.len(),
+        generated_links: all_links.len(),
+        rules_triggered: rules_triggered.into_iter().collect(),
     }))
 }
 
@@ -337,6 +380,7 @@ async fn persist_fusion_outputs(
             .await?;
         }
 
+        // Audit log for alert generation
         sqlx::query(
             "INSERT INTO audit_log (actor_type, actor_id, action, target_type, target_id, details, ts_ms)\
              VALUES ($1, $2, $3, $4, $5, $6, $7)",
@@ -380,14 +424,6 @@ fn to_h3_cell(lat: f64, lon: f64, resolution: u8) -> anyhow::Result<String> {
     let lat_lng = LatLng::new(lat, lon)?;
     let res = Resolution::try_from(resolution)?;
     Ok(lat_lng.to_cell(res).to_string())
-}
-
-fn pair_dedup_key(cell: &str, first_track_id: &str, second_track_id: &str) -> String {
-    if first_track_id <= second_track_id {
-        format!("{}|{}|{}", cell, first_track_id, second_track_id)
-    } else {
-        format!("{}|{}|{}", cell, second_track_id, first_track_id)
-    }
 }
 
 fn gc_dedup_cache(state: &AppState, now_ms: i64) {

@@ -18,6 +18,18 @@ export interface Alert {
   evidenceLinkIds: string[];
 }
 
+export interface SelectedTrack {
+  id: string;
+  providerId: string;
+  kind: number;
+  lat: number;
+  lon: number;
+  alt: number;
+  heading: number;
+  speed: number;
+  tsMs: number;
+}
+
 interface AppState {
   visionMode: VisionMode;
   setVisionMode: (mode: VisionMode) => void;
@@ -43,6 +55,10 @@ interface AppState {
   addAlert: (alert: Alert) => void;
   selectedAlertId: string | null;
   setSelectedAlertId: (id: string | null) => void;
+
+  // Selected Track State
+  selectedTrack: SelectedTrack | null;
+  setSelectedTrack: (track: SelectedTrack | null) => void;
 
   // Graph Query State
   showGraphQuery: boolean;
@@ -89,7 +105,8 @@ export const useStore = create<AppState>((set) => ({
   setIsPlaying: (isPlaying) => set({ isPlaying }),
   playbackRate: 1,
   setPlaybackRate: (rate) => set({ playbackRate: rate }),
-  currentTimeMs: Date.now(),
+  // Keep SSR/CSR deterministic; initialize on client after mount.
+  currentTimeMs: 0,
   setCurrentTimeMs: (time) => set({ currentTimeMs: time }),
 
   // Alert Defaults
@@ -97,6 +114,8 @@ export const useStore = create<AppState>((set) => ({
   addAlert: (alert) => set((state) => ({ alerts: [alert, ...state.alerts].slice(0, 50) })),
   selectedAlertId: null,
   setSelectedAlertId: (id) => set({ selectedAlertId: id }),
+  selectedTrack: null,
+  setSelectedTrack: (track) => set({ selectedTrack: track }),
 
   // Graph Defaults
   showGraphQuery: false,

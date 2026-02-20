@@ -1,7 +1,7 @@
 use super::Provider;
 use anyhow::Context;
 use async_trait::async_trait;
-use chrono::{Duration, Utc};
+use chrono::{Duration, SecondsFormat, Utc};
 use harpy_proto::harpy::v1::{Position, TrackDelta, TrackKind};
 use reqwest::Url;
 use serde::Deserialize;
@@ -107,8 +107,15 @@ impl UsgsSeismicProvider {
             ("orderby", "time".to_string()),
             ("limit", self.max_results.to_string()),
             ("minmagnitude", self.min_magnitude.to_string()),
-            ("starttime", start_time.to_rfc3339()),
-            ("endtime", end_time.to_rfc3339()),
+            // USGS rejects overly precise timestamps; use second precision ISO-8601.
+            (
+                "starttime",
+                start_time.to_rfc3339_opts(SecondsFormat::Secs, true),
+            ),
+            (
+                "endtime",
+                end_time.to_rfc3339_opts(SecondsFormat::Secs, true),
+            ),
         ];
 
         if let Some(bbox) = &self.bbox {

@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import * as Cesium from "cesium";
 import "cesium/Source/Widgets/widgets.css";
-import { useStore, VisionMode } from "@/store/useStore";
+import { useStore, VisionMode, type SelectedTrack } from "@/store/useStore";
 import { MockStreamer } from "@/mocks/mock-streamer";
 import { harpy } from "@harpy/shared-types";
 
@@ -23,6 +23,8 @@ interface RenderPayloadMessage {
   speeds: ArrayBuffer;
   kinds: ArrayBuffer;
   colors: ArrayBuffer;
+  ids: string[];
+  providerIds: string[];
   count: number;
 }
 
@@ -99,10 +101,12 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewerInstance = useRef<Cesium.Viewer | null>(null);
   const trackPrimitives = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const trackLookup = useRef<Map<string, SelectedTrack>>(new Map());
   const visionMode = useStore((state) => state.visionMode);
   const setConnectionStatus = useStore((state) => state.setConnectionStatus);
   const updateProviderStatus = useStore((state) => state.updateProviderStatus);
   const addAlert = useStore((state) => state.addAlert);
+  const setSelectedTrack = useStore((state) => state.setSelectedTrack);
   const layers = useStore((state) => state.layers);
   const isLive = useStore((state) => state.isLive);
   const isPlaying = useStore((state) => state.isPlaying);
@@ -169,29 +173,61 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     );
   };
 
-  const updatePrimitives = (payload: RenderPayloadMessage) => {
-    const { positions, colors, count } = payload;
+  const updatePrimitives = useCallback((payload: RenderPayloadMessage) => {
+    const { positions, headings, speeds, kinds, colors, ids, providerIds, count } = payload;
     const posArray = new Float64Array(positions);
+    const headingArray = new Float32Array(headings);
+    const speedArray = new Float32Array(speeds);
+    const kindArray = new Uint8Array(kinds);
     const colorArray = new Uint32Array(colors);
-    
+
     const collection = trackPrimitives.current;
     if (!collection) return;
 
+    const nextTrackLookup = new Map<string, SelectedTrack>();
     collection.removeAll();
     for (let i = 0; i < count; i++) {
       const lat = posArray[i * 3];
       const lon = posArray[i * 3 + 1];
       const alt = posArray[i * 3 + 2];
-      
-      collection.add({
+      const id = ids[i];
+      if (!id) {
+        continue;
+      }
+      const providerId = providerIds[i] ?? "unknown";
+      const kind = kindArray[i] ?? 0;
+      const heading = headingArray[i] ?? 0;
+      const speed = speedArray[i] ?? 0;
+
+      const primitive = collection.add({
         position: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
-        pixelSize: 8,
+        pixelSize: 12,
         color: Cesium.Color.fromRgba(colorArray[i]),
         outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 1
+        outlineWidth: 2,
+        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 2.0, 1.5e7, 0.5),
+      });
+      primitive.id = id;
+
+      nextTrackLookup.set(id, {
+        id,
+        providerId,
+        kind,
+        lat,
+        lon,
+        alt,
+        heading,
+        speed,
+        tsMs: Date.now(),
       });
     }
-  };
+
+    trackLookup.current = nextTrackLookup;
+    const selectedTrack = useStore.getState().selectedTrack;
+    if (selectedTrack && !nextTrackLookup.has(selectedTrack.id)) {
+      setSelectedTrack(null);
+    }
+  }, [setSelectedTrack]);
 
   useEffect(() => {
     if (!viewerRef.current || viewerInstance.current) return;
@@ -210,7 +246,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       geocoder: false,
       homeButton: false,
       infoBox: false,
-      sceneModePicker: true,
+      sceneModePicker: false,
       selectionIndicator: false,
       timeline: false,
       navigationHelpButton: false,
@@ -261,6 +297,27 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     // Initialize Primitives
     trackPrimitives.current = scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    const pickHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
+    pickHandler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
+      const picked = viewer.scene.pick(click.position) as
+        | { id?: unknown; primitive?: { id?: unknown } }
+        | undefined;
+
+      const pickedId =
+        typeof picked?.id === "string"
+          ? picked.id
+          : typeof picked?.primitive?.id === "string"
+            ? picked.primitive.id
+            : null;
+
+      if (!pickedId) {
+        setSelectedTrack(null);
+        return;
+      }
+
+      const selectedTrack = trackLookup.current.get(pickedId) ?? null;
+      setSelectedTrack(selectedTrack);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     // Initialize Workers
     wsDecodeWorker.current = new Worker(new URL("@/workers/ws-decode-worker.ts", import.meta.url));
@@ -287,16 +344,26 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     // Setup Real WebSocket
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
     let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let connectAttempt = 0;
 
     const connect = () => {
+      connectAttempt += 1;
+      const attempt = connectAttempt;
       setConnectionStatus("CONNECTING");
       const socket = new WebSocket(wsUrl);
       socketRef.current = socket;
       socket.binaryType = "arraybuffer";
 
       socket.onopen = () => {
+        if (disposed || socket !== socketRef.current) {
+          return;
+        }
+        if (reconnectTimeout) {
+          clearTimeout(reconnectTimeout);
+          reconnectTimeout = null;
+        }
         setConnectionStatus("CONNECTED");
-        console.log("[WS] Connected to", wsUrl);
+        console.log(`[WS] Connected to ${wsUrl} (attempt ${attempt})`);
         // Initial subscription
         sendSubscription(socket, layersRef.current, isLiveRef.current, currentTimeRef.current);
       };
@@ -307,17 +374,25 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         }
       };
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
+        if (socket !== socketRef.current || disposed) {
+          return;
+        }
         setConnectionStatus("DISCONNECTED");
         if (useWebSocket) {
-          console.log("[WS] Disconnected. Reconnecting...");
+          console.warn(
+            `[WS] Closed (code=${event.code}, reason=${event.reason || "none"}). Reconnecting...`,
+          );
           reconnectTimeout = setTimeout(connect, 3000);
         }
       };
 
-      socket.onerror = (err) => {
-        console.error("[WS] Error:", err);
-        socket.close();
+      socket.onerror = () => {
+        if (socket !== socketRef.current || disposed) {
+          return;
+        }
+        // Browsers emit opaque ErrorEvent objects; avoid noisy console errors in dev.
+        console.warn("[WS] Transport error signaled; waiting for close/reconnect.");
       };
     };
 
@@ -354,6 +429,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         socketRef.current.onclose = null;
         socketRef.current.close();
       }
+      pickHandler.destroy();
       if (viewerInstance.current) {
         viewerInstance.current.destroy();
         viewerInstance.current = null;
@@ -367,6 +443,8 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     ionToken,
     mockOnlyMode,
     setConnectionStatus,
+    updatePrimitives,
+    setSelectedTrack,
     updateProviderStatus,
     useMockStreamer,
     useWebSocket,
@@ -406,15 +484,50 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 const setupPostProcessing = (scene: Cesium.Scene) => {
   const stages = scene.postProcessStages;
 
+  const eoStage = new Cesium.PostProcessStage({
+    name: "EO",
+    fragmentShader: `
+      uniform sampler2D colorTexture;
+      in vec2 v_textureCoordinates;
+      void main() {
+        vec4 color = texture(colorTexture, v_textureCoordinates);
+        // Crisp daylight EO look: slight contrast + saturation boost.
+        vec3 contrasted = clamp((color.rgb - 0.5) * 1.12 + 0.5, 0.0, 1.0);
+        float luma = dot(contrasted, vec3(0.299, 0.587, 0.114));
+        vec3 saturated = mix(vec3(luma), contrasted, 1.18);
+        out_FragColor = vec4(clamp(saturated, 0.0, 1.0), color.a);
+      }
+    `
+  });
+  eoStage.enabled = false;
+
+  const crtStage = new Cesium.PostProcessStage({
+    name: "CRT",
+    fragmentShader: `
+      uniform sampler2D colorTexture;
+      in vec2 v_textureCoordinates;
+      void main() {
+        vec2 uv = v_textureCoordinates;
+        vec4 color = texture(colorTexture, uv);
+        // Simple scanline + vignette effect for CRT mode.
+        float scan = 0.94 + 0.06 * sin(uv.y * 1200.0);
+        float vignette = smoothstep(0.92, 0.28, distance(uv, vec2(0.5)));
+        vec3 crt = color.rgb * scan * vignette;
+        out_FragColor = vec4(clamp(crt, 0.0, 1.0), color.a);
+      }
+    `
+  });
+  crtStage.enabled = false;
+
   const nvgStage = new Cesium.PostProcessStage({
     name: "NVG",
     fragmentShader: `
       uniform sampler2D colorTexture;
-      varying vec2 v_textureCoordinates;
+      in vec2 v_textureCoordinates;
       void main() {
-        vec4 color = texture2D(colorTexture, v_textureCoordinates);
+        vec4 color = texture(colorTexture, v_textureCoordinates);
         float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-        gl_FragColor = vec4(0.0, luminance * 1.5, 0.0, 1.0);
+        out_FragColor = vec4(0.0, luminance * 1.5, 0.0, 1.0);
       }
     `
   });
@@ -424,36 +537,48 @@ const setupPostProcessing = (scene: Cesium.Scene) => {
     name: "FLIR",
     fragmentShader: `
       uniform sampler2D colorTexture;
-      varying vec2 v_textureCoordinates;
+      in vec2 v_textureCoordinates;
       void main() {
-        vec4 color = texture2D(colorTexture, v_textureCoordinates);
+        vec4 color = texture(colorTexture, v_textureCoordinates);
         float luminance = dot(color.rgb, vec3(0.299, 0.587, 0.114));
-        gl_FragColor = vec4(vec3(luminance), 1.0);
+        out_FragColor = vec4(vec3(luminance), 1.0);
       }
     `
   });
   flirStage.enabled = false;
 
+  stages.add(eoStage);
+  stages.add(crtStage);
   stages.add(nvgStage);
   stages.add(flirStage);
 };
 
 const updateVisionMode = (scene: Cesium.Scene, mode: VisionMode) => {
   const stages = scene.postProcessStages;
+  let eoStage: Cesium.PostProcessStage | Cesium.PostProcessStageComposite | undefined;
+  let crtStage: Cesium.PostProcessStage | Cesium.PostProcessStageComposite | undefined;
   let nvgStage: Cesium.PostProcessStage | Cesium.PostProcessStageComposite | undefined;
   let flirStage: Cesium.PostProcessStage | Cesium.PostProcessStageComposite | undefined;
 
   for (let i = 0; i < stages.length; i++) {
     const stage = stages.get(i);
     stage.enabled = false;
-    if (stage.name === "NVG") {
+    if (stage.name === "EO") {
+      eoStage = stage;
+    } else if (stage.name === "CRT") {
+      crtStage = stage;
+    } else if (stage.name === "NVG") {
       nvgStage = stage;
     } else if (stage.name === "FLIR") {
       flirStage = stage;
     }
   }
 
-  if (mode === "NVG") {
+  if (mode === "EO") {
+    if (eoStage) eoStage.enabled = true;
+  } else if (mode === "CRT") {
+    if (crtStage) crtStage.enabled = true;
+  } else if (mode === "NVG") {
     if (nvgStage) nvgStage.enabled = true;
   } else if (mode === "FLIR") {
     if (flirStage) flirStage.enabled = true;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Download, Lock, Shield, X } from "lucide-react";
 import styles from "./HUD.module.css";
 import { useStore } from "@/store/useStore";
@@ -15,10 +15,28 @@ const ExportModal: React.FC = () => {
   const [trackId, setTrackId] = useState("track_0");
   const [error, setError] = useState<string | null>(null);
   const [watermarkTs] = useState(() => new Date().toISOString());
+  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
+  const isOfflineMode = streamMode === "offline";
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setShowExport(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [setShowExport]);
 
   if (!showExport) return null;
 
   const handleExport = async () => {
+    if (isOfflineMode) {
+      setError("Export is disabled in offline mode.");
+      setToken(null);
+      return;
+    }
+
     setDownloading(true);
     setError(null);
     try {
@@ -57,8 +75,8 @@ const ExportModal: React.FC = () => {
   };
 
   return (
-    <div className={styles.modalOverlay}>
-      <div className={styles.graphModal}>
+    <div className={styles.modalOverlay} onClick={() => setShowExport(false)}>
+      <div className={styles.graphModal} onClick={(event) => event.stopPropagation()}>
         <div className={styles.modalHeader}>
           <div className={styles.modalTitle}>
             <Download size={16} />
@@ -104,7 +122,8 @@ const ExportModal: React.FC = () => {
               <button 
                 className={styles.runButton}
                 onClick={handleExport}
-                disabled={downloading}
+                disabled={downloading || isOfflineMode}
+                title={isOfflineMode ? "Export service disabled in offline mode" : undefined}
               >
                 {downloading ? "SIGNING & PACKING..." : "GENERATE_EXPORT"}
                 {!downloading && <Shield size={12} />}

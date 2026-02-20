@@ -20,5 +20,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 dashmap.workspace = true
 h3o.workspace = true
+redis.workspace = true
+futures-util = "0.3"
 
 harpy-core = { path = "../../crates/harpy-core" }

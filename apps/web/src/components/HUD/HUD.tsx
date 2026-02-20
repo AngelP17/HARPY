@@ -10,6 +10,9 @@ import AlertStack from "./AlertStack";
 import GraphQuery from "./GraphQuery";
 import CommandPalette from "./CommandPalette";
 import ExportModal from "./ExportModal";
+import IntelPanel from "./IntelPanel";
+import TrackInspector from "./TrackInspector";
+import EntityDetailPanel from "./EntityDetailPanel";
 
 const HUD: React.FC = () => {
   const visionMode = useStore((state) => state.visionMode);
@@ -23,6 +26,8 @@ const HUD: React.FC = () => {
   const setShowExport = useStore((state) => state.setShowExport);
   const userRole = useStore((state) => state.userRole);
   const setUserRole = useStore((state) => state.setUserRole);
+  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
+  const isOfflineMode = streamMode === "offline";
 
   const modes: VisionMode[] = ["NORMAL", "EO", "CRT", "NVG", "FLIR"];
 
@@ -100,15 +105,33 @@ const HUD: React.FC = () => {
             <span>TOOLS</span>
           </div>
           <div className={styles.layerList}>
-            <button className="hud-button" onClick={() => setShowGraphQuery(true)}>
+            <button
+              className="hud-button"
+              onClick={() => setShowGraphQuery(true)}
+              disabled={isOfflineMode}
+              title={isOfflineMode ? "Graph service disabled in offline mode" : undefined}
+              style={isOfflineMode ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            >
               GRAPH_QUERY
             </button>
-            <button className="hud-button" onClick={() => setShowCommandPalette(true)}>
+            <button
+              className="hud-button"
+              onClick={() => setShowCommandPalette(true)}
+              disabled={isOfflineMode}
+              title={isOfflineMode ? "AIP service disabled in offline mode" : undefined}
+              style={isOfflineMode ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+            >
               AI_CMD (CMD+K)
             </button>
             
             {userRole !== "VIEWER" && (
-              <button className="hud-button" onClick={() => setShowExport(true)}>
+              <button
+                className="hud-button"
+                onClick={() => setShowExport(true)}
+                disabled={isOfflineMode}
+                title={isOfflineMode ? "Export service disabled in offline mode" : undefined}
+                style={isOfflineMode ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
+              >
                 EXPORT_SCENE
               </button>
             )}
@@ -162,13 +185,16 @@ const HUD: React.FC = () => {
                     </div>
                     <div className={styles.providerMeta}>
                       <span>{p.circuitState.replace("CIRCUIT_STATE_", "")}</span>
-                      <span>{Math.round(p.latencyMs)}ms</span>
+                      <span>{isNaN(p.latencyMs) ? "--" : Math.round(p.latencyMs)}ms</span>
                     </div>
                   </div>
                 ))
               )}
             </div>
           </div>
+
+          <TrackInspector />
+          <IntelPanel />
 
           <div className={clsx("hud-panel", styles.alertPanel)}>
             <div className={styles.panelHeader}>
@@ -184,6 +210,9 @@ const HUD: React.FC = () => {
 
       {/* Bottom: DVR Timeline */}
       <Timeline />
+
+      {/* Entity Detail Overlay (shows detailed info when entity selected) */}
+      <EntityDetailPanel />
 
       {/* Modals */}
       <GraphQuery />

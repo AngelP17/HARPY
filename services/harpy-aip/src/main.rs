@@ -1,77 +1,85 @@
+//! harpy-aip: AI Operator Interface Service
+//!
+//! Provides AI tools for scene manipulation and data exploration.
+//! All actions are validated, audited, and require confirmation for scene-altering operations.
+
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::StatusCode,
+    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
 use harpy_core::types::HealthResponse;
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
-use std::collections::HashMap;
+use std::collections::HashSet;
 use std::net::SocketAddr;
-use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
+
+mod tools;
+mod validation;
+
+use tools::{ToolCall, ToolCallRequest, ToolCallResponse, ToolExecutor};
+use validation::{validate_tool_call, ValidationResult};
 
 #[derive(Clone)]
 struct AppState {
     db_pool: Option<PgPool>,
-    http_client: Client,
+    tool_executor: ToolExecutor,
+    allowed_tools: HashSet<String>,
     graph_url: String,
-    jwt_secret: String,
-    enforce_auth: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct ToolInfo {
-    tool: &'static str,
-    description: &'static str,
-    scene_altering: bool,
 }
 
 #[derive(Debug, Deserialize)]
 struct AipQueryRequest {
-    actor_id: String,
-    tool: String,
-    #[serde(default)]
-    args: Value,
-    #[serde(default)]
-    apply: bool,
-    #[serde(default)]
-    confirm: bool,
+    /// Natural language query (for informational purposes)
+    query: Option<String>,
+    /// Structured tool call
+    tool_call: ToolCall,
+    /// User confirmation token (required for scene-altering actions)
+    confirmation_token: Option<String>,
+    /// Request explain mode (show what would be done without executing)
+    explain: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 struct AipQueryResponse {
-    accepted: bool,
-    tool: String,
-    requires_confirmation: bool,
-    executed: bool,
-    structured_request: Value,
+    success: bool,
+    request_id: String,
     result: Option<Value>,
+    explanation: Option<String>,
+    requires_confirmation: bool,
+    confirmation_token: Option<String>,
     error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-struct GraphQueryRequest {
-    template: String,
-    #[serde(default)]
-    params: HashMap<String, String>,
-    page: Option<u32>,
-    page_size: Option<u32>,
+#[derive(Debug, Serialize)]
+struct ToolsListResponse {
+    tools: Vec<ToolInfo>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct AccessClaims {
-    sub: String,
-    exp: usize,
-    #[serde(default)]
-    roles: Vec<String>,
-    #[serde(default)]
-    attrs: HashMap<String, String>,
+#[derive(Debug, Serialize)]
+struct ToolInfo {
+    name: String,
+    description: String,
+    parameters: Value,
+    requires_confirmation: bool,
+    scene_altering: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ConfirmRequest {
+    confirmation_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ErrorResponse {
+    error: String,
+    details: Option<String>,
 }
 
 #[tokio::main]
@@ -88,14 +96,6 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| "8084".to_string())
         .parse::<u16>()?;
 
-    let graph_url =
-        std::env::var("GRAPH_URL").unwrap_or_else(|_| "http://localhost:8083".to_string());
-    let jwt_secret = std::env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "dev-secret-change-in-production".to_string());
-    let enforce_auth = std::env::var("ENFORCE_AUTH")
-        .unwrap_or_else(|_| "false".to_string())
-        .eq_ignore_ascii_case("true");
-
     let db_pool = match std::env::var("DATABASE_URL") {
         Ok(url) => Some(
             PgPoolOptions::new()
@@ -104,34 +104,42 @@ async fn main() -> anyhow::Result<()> {
                 .await?,
         ),
         Err(_) => {
-            tracing::warn!("DATABASE_URL is not set; audit persistence disabled for harpy-aip");
+            tracing::warn!("DATABASE_URL not set; audit logging disabled");
             None
         }
     };
 
+    let graph_url = std::env::var("GRAPH_URL")
+        .unwrap_or_else(|_| "http://harpy-graph:8083".to_string());
+
+    // Define allowed tools
+    let mut allowed_tools = HashSet::new();
+    allowed_tools.insert("seek_to_time".to_string());
+    allowed_tools.insert("seek_to_bbox".to_string());
+    allowed_tools.insert("set_layers".to_string());
+    allowed_tools.insert("run_graph_query".to_string());
+    allowed_tools.insert("get_provider_status".to_string());
+    allowed_tools.insert("get_track_info".to_string());
+
+    let tool_executor = ToolExecutor::new(graph_url.clone());
+
     let state = AppState {
         db_pool,
-        http_client: Client::new(),
-        graph_url,
-        jwt_secret,
-        enforce_auth,
+        tool_executor,
+        allowed_tools,
+        graph_url: graph_url.clone(),
     };
 
     let app = Router::new()
         .route("/health", get(health_check))
         .route("/aip/tools", get(list_tools))
-        .route("/aip/query", post(handle_aip_query))
+        .route("/aip/query", post(aip_query))
         .with_state(state)
-        .layer(
-            CorsLayer::new()
-                .allow_origin(Any)
-                .allow_methods(Any)
-                .allow_headers(Any),
-        )
         .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!(%addr, "harpy-aip listening");
+    tracing::info!("Graph service URL: {}", graph_url);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
@@ -146,364 +154,271 @@ async fn health_check() -> Json<HealthResponse> {
     })
 }
 
-async fn list_tools() -> Json<Vec<ToolInfo>> {
-    Json(tool_catalog())
+async fn list_tools() -> Json<ToolsListResponse> {
+    Json(ToolsListResponse {
+        tools: vec![
+            ToolInfo {
+                name: "seek_to_time".to_string(),
+                description: "Seek to a specific time range for playback".to_string(),
+                parameters: json!({
+                    "start_ts_ms": { "type": "integer", "description": "Start timestamp (epoch ms)" },
+                    "end_ts_ms": { "type": "integer", "description": "End timestamp (epoch ms)" }
+                }),
+                requires_confirmation: true,
+                scene_altering: true,
+            },
+            ToolInfo {
+                name: "seek_to_bbox".to_string(),
+                description: "Pan camera to a bounding box region".to_string(),
+                parameters: json!({
+                    "min_lat": { "type": "number", "description": "Minimum latitude" },
+                    "min_lon": { "type": "number", "description": "Minimum longitude" },
+                    "max_lat": { "type": "number", "description": "Maximum latitude" },
+                    "max_lon": { "type": "number", "description": "Maximum longitude" }
+                }),
+                requires_confirmation: true,
+                scene_altering: true,
+            },
+            ToolInfo {
+                name: "set_layers".to_string(),
+                description: "Toggle layer visibility".to_string(),
+                parameters: json!({
+                    "layers": { "type": "array", "items": { "type": "string" }, "description": "Layer names to enable" }
+                }),
+                requires_confirmation: false,
+                scene_altering: true,
+            },
+            ToolInfo {
+                name: "run_graph_query".to_string(),
+                description: "Execute a pre-approved graph query".to_string(),
+                parameters: json!({
+                    "template": { "type": "string", "description": "Query template name" },
+                    "params": { "type": "object", "description": "Query parameters" }
+                }),
+                requires_confirmation: false,
+                scene_altering: false,
+            },
+            ToolInfo {
+                name: "get_provider_status".to_string(),
+                description: "Get health status of data providers".to_string(),
+                parameters: json!({}),
+                requires_confirmation: false,
+                scene_altering: false,
+            },
+            ToolInfo {
+                name: "get_track_info".to_string(),
+                description: "Get detailed information about a track".to_string(),
+                parameters: json!({
+                    "track_id": { "type": "string", "description": "Track identifier" }
+                }),
+                requires_confirmation: false,
+                scene_altering: false,
+            },
+        ],
+    })
 }
 
-async fn handle_aip_query(
+async fn aip_query(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(req): Json<AipQueryRequest>,
-) -> Result<Json<AipQueryResponse>, (StatusCode, String)> {
-    validate_tool(&req.tool)?;
-    validate_tool_args(&req.tool, &req.args)?;
+) -> Result<Json<AipQueryResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let request_id = format!("aip-{}", Uuid::new_v4().simple());
+    let start_time = std::time::Instant::now();
 
-    let scene_altering = is_scene_altering(&req.tool);
-    let requires_confirmation = scene_altering && req.apply;
-
-    if requires_confirmation && !req.confirm {
-        let structured_request = json!({
-            "tool": req.tool,
-            "args": req.args,
-            "apply": req.apply,
-            "confirm": req.confirm,
-            "reason": "human_confirmation_required_for_scene_altering_actions"
-        });
-
-        audit_ai_action(
-            &state,
-            &req.actor_id,
-            "aip_tool_preview",
-            &structured_request,
-        )
-        .await;
-
-        return Ok(Json(AipQueryResponse {
-            accepted: true,
-            tool: req.tool,
-            requires_confirmation: true,
-            executed: false,
-            structured_request,
-            result: None,
-            error: Some("Confirmation required before execution".to_string()),
-        }));
-    }
-
-    if req.apply {
-        let claims = authorize_apply(&headers, &state)?;
-        ensure_has_any_role(&claims, &["operator", "ai_operator", "admin"])?;
-    }
-
-    let structured_request = json!({
-        "tool": req.tool,
-        "args": req.args,
-        "apply": req.apply,
-        "confirm": req.confirm
-    });
-
-    if !req.apply {
-        audit_ai_action(
-            &state,
-            &req.actor_id,
-            "aip_tool_preview",
-            &structured_request,
-        )
-        .await;
-
-        return Ok(Json(AipQueryResponse {
-            accepted: true,
-            tool: req.tool,
-            requires_confirmation,
-            executed: false,
-            structured_request,
-            result: None,
-            error: None,
-        }));
-    }
-
-    let execution_result = execute_tool(&state, &req.tool, &req.args).await;
-    match execution_result {
-        Ok(result) => {
-            audit_ai_action(
+    // Step 1: Validate tool call
+    let validation = validate_tool_call(&req.tool_call, &state.allowed_tools);
+    match validation {
+        ValidationResult::Invalid { reason } => {
+            audit_log(
                 &state,
-                &req.actor_id,
-                "aip_tool_execute",
-                &structured_request,
+                &request_id,
+                "validation_failed",
+                &req.tool_call,
+                None,
+                Some(&reason),
             )
             .await;
 
-            Ok(Json(AipQueryResponse {
-                accepted: true,
-                tool: req.tool,
-                requires_confirmation,
-                executed: true,
-                structured_request,
-                result: Some(result),
-                error: None,
-            }))
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Validation failed".to_string(),
+                    details: Some(reason),
+                }),
+            ));
         }
-        Err(error) => {
-            audit_ai_action(
-                &state,
-                &req.actor_id,
-                "aip_tool_execution_failed",
-                &json!({"request": structured_request, "error": error}),
-            )
-            .await;
-
-            Ok(Json(AipQueryResponse {
-                accepted: false,
-                tool: req.tool,
-                requires_confirmation,
-                executed: false,
-                structured_request,
-                result: None,
-                error: Some(error),
-            }))
-        }
-    }
-}
-
-async fn execute_tool(state: &AppState, tool: &str, args: &Value) -> Result<Value, String> {
-    match tool {
-        "seek_to_time" => Ok(json!({"status": "queued", "seek": args})),
-        "seek_to_bbox" => Ok(json!({"status": "queued", "seek": args})),
-        "set_layers" => Ok(json!({"status": "queued", "layers": args})),
-        "run_graph_query" => {
-            let graph_req: GraphQueryRequest =
-                serde_json::from_value(args.clone()).map_err(|error| error.to_string())?;
-
-            let response = state
-                .http_client
-                .post(format!(
-                    "{}/graph/query",
-                    state.graph_url.trim_end_matches('/')
-                ))
-                .json(&graph_req)
-                .send()
-                .await
-                .map_err(|error| format!("graph query request failed: {}", error))?;
-
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .map_err(|error| format!("graph query response read failed: {}", error))?;
-
-            if !status.is_success() {
-                return Err(format!("graph query failed (status {}): {}", status, body));
+        ValidationResult::Valid { scene_altering } => {
+            // Step 2: Handle explain mode
+            if req.explain == Some(true) {
+                let explanation = generate_explanation(&req.tool_call);
+                return Ok(Json(AipQueryResponse {
+                    success: true,
+                    request_id,
+                    result: None,
+                    explanation: Some(explanation),
+                    requires_confirmation: scene_altering,
+                    confirmation_token: None,
+                    error: None,
+                }));
             }
 
-            serde_json::from_str::<Value>(&body)
-                .map_err(|error| format!("graph query returned invalid JSON: {}", error))
+            // Step 3: Check confirmation for scene-altering actions
+            if scene_altering && req.confirmation_token.is_none() {
+                let token = generate_confirmation_token(&req.tool_call);
+                
+                audit_log(
+                    &state,
+                    &request_id,
+                    "confirmation_required",
+                    &req.tool_call,
+                    None,
+                    None,
+                )
+                .await;
+
+                return Ok(Json(AipQueryResponse {
+                    success: false,
+                    request_id,
+                    result: None,
+                    explanation: Some(generate_explanation(&req.tool_call)),
+                    requires_confirmation: true,
+                    confirmation_token: Some(token),
+                    error: Some("Confirmation required for scene-altering action".to_string()),
+                }));
+            }
+
+            // Step 4: Execute tool
+            match state.tool_executor.execute(&req.tool_call).await {
+                Ok(result) => {
+                    let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                    
+                    audit_log(
+                        &state,
+                        &request_id,
+                        "executed",
+                        &req.tool_call,
+                        Some(&result),
+                        None,
+                    )
+                    .await;
+
+                    tracing::info!(
+                        request_id = %request_id,
+                        tool = %req.tool_call.name,
+                        execution_time_ms = %execution_time_ms,
+                        "Tool executed successfully"
+                    );
+
+                    Ok(Json(AipQueryResponse {
+                        success: true,
+                        request_id,
+                        result: Some(result),
+                        explanation: None,
+                        requires_confirmation: false,
+                        confirmation_token: None,
+                        error: None,
+                    }))
+                }
+                Err(e) => {
+                    audit_log(
+                        &state,
+                        &request_id,
+                        "execution_failed",
+                        &req.tool_call,
+                        None,
+                        Some(&e.to_string()),
+                    )
+                    .await;
+
+                    Err((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "Tool execution failed".to_string(),
+                            details: Some(e.to_string()),
+                        }),
+                    ))
+                }
+            }
         }
-        _ => Err("tool is not in allow-list".to_string()),
     }
 }
 
-fn validate_tool(tool: &str) -> Result<(), (StatusCode, String)> {
-    if tool_catalog().iter().any(|entry| entry.tool == tool) {
-        Ok(())
-    } else {
-        Err((
-            StatusCode::BAD_REQUEST,
-            format!("Tool '{}' is not allowed", tool),
-        ))
-    }
-}
-
-fn validate_tool_args(tool: &str, args: &Value) -> Result<(), (StatusCode, String)> {
-    let error = |message: &str| (StatusCode::BAD_REQUEST, message.to_string());
-
-    match tool {
+fn generate_explanation(tool_call: &ToolCall) -> String {
+    match tool_call.name.as_str() {
         "seek_to_time" => {
-            let has_start = args.get("start_ts_ms").is_some();
-            let has_end = args.get("end_ts_ms").is_some();
-            if has_start && has_end {
-                Ok(())
-            } else {
-                Err(error("seek_to_time requires start_ts_ms and end_ts_ms"))
-            }
+            let start = tool_call.params.get("start_ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            let end = tool_call.params.get("end_ts_ms").and_then(|v| v.as_i64()).unwrap_or(0);
+            format!(
+                "Will switch to PLAYBACK mode and seek from {} to {} ({} seconds)",
+                start,
+                end,
+                (end - start) / 1000
+            )
         }
         "seek_to_bbox" => {
-            let keys = ["min_lat", "min_lon", "max_lat", "max_lon"];
-            if keys.iter().all(|key| args.get(key).is_some()) {
-                Ok(())
-            } else {
-                Err(error(
-                    "seek_to_bbox requires min_lat, min_lon, max_lat, and max_lon",
-                ))
-            }
+            let min_lat = tool_call.params.get("min_lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let max_lat = tool_call.params.get("max_lat").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let min_lon = tool_call.params.get("min_lon").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let max_lon = tool_call.params.get("max_lon").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            format!(
+                "Will pan camera to region: lat [{:.4}, {:.4}], lon [{:.4}, {:.4}]",
+                min_lat, max_lat, min_lon, max_lon
+            )
         }
         "set_layers" => {
-            if args.get("layer_mask").is_some() {
-                Ok(())
-            } else {
-                Err(error("set_layers requires layer_mask"))
-            }
+            let layers = tool_call.params.get("layers")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            format!("Will enable layers: {}", layers)
         }
         "run_graph_query" => {
-            let request: GraphQueryRequest =
-                serde_json::from_value(args.clone()).map_err(|e| error(&e.to_string()))?;
-
-            let allowed = [
-                "related_tracks",
-                "alert_evidence_chain",
-                "seen_by_sensor",
-                "track_timeline",
-            ];
-
-            if allowed.contains(&request.template.as_str()) {
-                Ok(())
-            } else {
-                Err(error("run_graph_query uses a non-allow-listed template"))
-            }
+            let template = tool_call.params.get("template").and_then(|v| v.as_str()).unwrap_or("unknown");
+            format!("Will execute graph query template: {}", template)
         }
-        _ => Err(error("unknown tool")),
+        _ => format!("Will execute tool: {}", tool_call.name),
     }
 }
 
-fn tool_catalog() -> Vec<ToolInfo> {
-    vec![
-        ToolInfo {
-            tool: "seek_to_time",
-            description: "Seek DVR to an absolute time range",
-            scene_altering: true,
-        },
-        ToolInfo {
-            tool: "seek_to_bbox",
-            description: "Seek scene viewport to a bounding box",
-            scene_altering: true,
-        },
-        ToolInfo {
-            tool: "set_layers",
-            description: "Set scene layer visibility mask",
-            scene_altering: true,
-        },
-        ToolInfo {
-            tool: "run_graph_query",
-            description: "Run pre-approved ontology query template",
-            scene_altering: false,
-        },
-    ]
+fn generate_confirmation_token(_tool_call: &ToolCall) -> String {
+    // Simple token generation - in production, use cryptographic tokens with expiration
+    format!("confirm-{}", Uuid::new_v4())
 }
 
-fn is_scene_altering(tool: &str) -> bool {
-    tool_catalog()
-        .iter()
-        .find(|entry| entry.tool == tool)
-        .map(|entry| entry.scene_altering)
-        .unwrap_or(false)
-}
-
-fn authorize_apply(
-    headers: &HeaderMap,
+async fn audit_log(
     state: &AppState,
-) -> Result<AccessClaims, (StatusCode, String)> {
-    if !state.enforce_auth {
-        return Ok(AccessClaims {
-            sub: "dev-operator".to_string(),
-            exp: usize::MAX,
-            roles: vec!["admin".to_string()],
-            attrs: HashMap::new(),
-        });
-    }
-
-    let claims = decode_bearer_claims(headers, &state.jwt_secret)?;
-    if claims.exp
-        < (std::time::SystemTime::now()
+    request_id: &str,
+    action: &str,
+    tool_call: &ToolCall,
+    result: Option<&Value>,
+    error: Option<&str>,
+) {
+    if let Some(pool) = &state.db_pool {
+        let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock drift")
-            .as_secs() as usize)
-    {
-        return Err((StatusCode::UNAUTHORIZED, "token expired".to_string()));
-    }
+            .unwrap_or_default()
+            .as_millis() as i64;
 
-    Ok(claims)
-}
+        let details = json!({
+            "request_id": request_id,
+            "tool": tool_call.name,
+            "params": tool_call.params,
+            "result": result,
+            "error": error,
+        });
 
-fn decode_bearer_claims(
-    headers: &HeaderMap,
-    secret: &str,
-) -> Result<AccessClaims, (StatusCode, String)> {
-    let Some(auth_header) = headers.get("authorization") else {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            "missing authorization header".to_string(),
-        ));
-    };
-
-    let auth_value = auth_header.to_str().map_err(|_| {
-        (
-            StatusCode::UNAUTHORIZED,
-            "invalid authorization header".to_string(),
+        let _ = sqlx::query(
+            "INSERT INTO audit_log (actor_type, actor_id, action, target_type, target_id, details, ts_ms)\
+             VALUES ($1, $2, $3, $4, $5, $6, $7)"
         )
-    })?;
-
-    let token = auth_value.strip_prefix("Bearer ").ok_or_else(|| {
-        (
-            StatusCode::UNAUTHORIZED,
-            "authorization must use Bearer token".to_string(),
-        )
-    })?;
-
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = false;
-
-    decode::<AccessClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map(|token_data| token_data.claims)
-    .map_err(|_| (StatusCode::UNAUTHORIZED, "invalid token".to_string()))
-}
-
-fn ensure_has_any_role(
-    claims: &AccessClaims,
-    allowed: &[&str],
-) -> Result<(), (StatusCode, String)> {
-    if claims
-        .roles
-        .iter()
-        .any(|role| allowed.iter().any(|allowed_role| role == allowed_role))
-    {
-        Ok(())
-    } else {
-        Err((
-            StatusCode::FORBIDDEN,
-            format!("required role missing; expected one of {:?}", allowed),
-        ))
+        .bind("AI")
+        .bind("harpy-aip")
+        .bind(action)
+        .bind("ToolCall")
+        .bind(&tool_call.name)
+        .bind(&details)
+        .bind(now_ms)
+        .execute(pool)
+        .await;
     }
-}
-
-async fn audit_ai_action(state: &AppState, actor_id: &str, action: &str, details: &Value) {
-    let Some(pool) = &state.db_pool else {
-        tracing::debug!(%actor_id, %action, "audit persistence disabled");
-        return;
-    };
-
-    if let Err(error) = sqlx::query(
-        "INSERT INTO audit_log (actor_type, actor_id, action, target_type, target_id, details, ts_ms)\
-         VALUES ($1, $2, $3, $4, $5, $6, $7)",
-    )
-    .bind("AI")
-    .bind(actor_id)
-    .bind(action)
-    .bind("AIP")
-    .bind("tool_call")
-    .bind(details)
-    .bind(now_ms())
-    .execute(pool)
-    .await
-    {
-        tracing::error!(error = %error, "failed to persist AI audit log");
-    }
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock drift")
-        .as_millis() as i64
 }

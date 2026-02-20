@@ -73,8 +73,9 @@ pub async fn run_subscriber(
     // Subscribe to channels
     pubsub.subscribe("tracks:updates").await?;
     pubsub.subscribe("alerts:updates").await?;
+    pubsub.subscribe("links:updates").await?;
 
-    tracing::info!("Subscribed to Redis channels: tracks:updates, alerts:updates");
+    tracing::info!("Subscribed to Redis channels: tracks:updates, alerts:updates, links:updates");
 
     // Get message stream
     let mut msg_stream = pubsub.on_message();
@@ -105,6 +106,9 @@ pub async fn run_subscriber(
                     }
                     "alerts:updates" => {
                         handle_alert(payload, &subscription_manager).await;
+                    }
+                    "links:updates" => {
+                        handle_link(payload, &subscription_manager).await;
                     }
                     _ => {
                         tracing::debug!("Unknown channel: {}", channel);
@@ -299,6 +303,67 @@ fn convert_to_proto_status(json: ProviderStatusJson) -> ProviderStatus {
         failure_count: if json.last_success { 0 } else { 1 },
         error_message: None,
         meta: Default::default(),
+    }
+}
+
+/// Handle link from Redis
+async fn handle_link(payload: String, subscription_manager: &Arc<SubscriptionManager>) {
+    // Parse the link JSON
+    match serde_json::from_str::<serde_json::Value>(&payload) {
+        Ok(link_json) => {
+            let link = harpy_proto::harpy::v1::LinkUpsert {
+                id: link_json
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                from: Some(harpy_proto::harpy::v1::NodeRef {
+                    node_type: harpy_proto::harpy::v1::NodeType::Track as i32,
+                    node_id: link_json
+                        .get("from_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                }),
+                rel: link_json
+                    .get("rel")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                to: Some(harpy_proto::harpy::v1::NodeRef {
+                    node_type: harpy_proto::harpy::v1::NodeType::Track as i32,
+                    node_id: link_json
+                        .get("to_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                }),
+                ts_ms: link_json
+                    .get("ts_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or_else(now_ms),
+                meta: link_json
+                    .get("meta")
+                    .and_then(|v| v.as_object())
+                    .map(|o| {
+                        o.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            };
+            let envelope = Envelope {
+                schema_version: "1.0.0".to_string(),
+                server_ts_ms: now_ms(),
+                payload: Some(harpy_proto::harpy::v1::envelope::Payload::LinkUpsert(
+                    link,
+                )),
+            };
+            subscription_manager.broadcast_to_all(envelope).await;
+        }
+        Err(e) => {
+            tracing::warn!("Failed to parse link from Redis: {}", e);
+        }
     }
 }
 

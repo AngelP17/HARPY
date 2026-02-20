@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-status dev-logs dev-down dev-health lint test build perf-check proto clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-status dev-logs dev-down dev-health lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -19,6 +19,7 @@ help:
 	@echo "  make test         - Run all tests"
 	@echo "  make build        - Build all services in release mode"
 	@echo "  make perf-check   - Check build performance"
+	@echo "  make verify       - Deterministic full-stack verification (backend + frontend)"
 	@echo "  make proto        - Generate protobuf code"
 	@echo "  make clean        - Clean build artifacts"
 
@@ -92,6 +93,20 @@ perf-check:
 proto:
 	@echo "Generating protobuf code..."
 	@cd crates/harpy-proto && cargo build
+
+verify:
+	@echo "Running deterministic verification pipeline..."
+	$(MAKE) lint
+	$(MAKE) test
+	$(MAKE) build
+	@echo "Building shared types..."
+	@npm --prefix packages/shared-types run build
+	@echo "Linting frontend..."
+	@npm --prefix apps/web run lint
+	@echo "Building frontend..."
+	@rm -f apps/web/.next/lock
+	@npm --prefix apps/web run build
+	@echo "Verification complete."
 
 clean:
 	cargo clean

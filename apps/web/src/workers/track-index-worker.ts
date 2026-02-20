@@ -13,98 +13,108 @@ interface Track {
   tsMs: number;
 }
 
+interface FilterState {
+  minAltM: number;
+  maxAltM: number;
+  minSpeedMs: number;
+  maxSpeedMs: number;
+}
+
 const kindToColor = (kind: number): number => {
   switch (kind) {
-    case 1: // AIRCRAFT
-      return 0x00ff00ff;
-    case 2: // SATELLITE
-      return 0x00bfffff;
-    case 3: // GROUND
-      return 0xffaa00ff;
-    case 4: // VESSEL
-      return 0x00ffffff;
+    case 1:
+      return 0x49d8ffff;
+    case 2:
+      return 0x8e7effff;
+    case 3:
+      return 0x69f4c9ff;
+    case 4:
+      return 0xffb769ff;
     default:
-      return 0xffffffff;
+      return 0xe0ecffff;
   }
+};
+
+const clampLat = (value: number): number => Math.max(-89.999, Math.min(89.999, value));
+
+const normalizeLon = (value: number): number => {
+  const wrapped = ((value + 180) % 360 + 360) % 360 - 180;
+  return wrapped === -180 ? 180 : wrapped;
 };
 
 const trackStore = new Map<string, Track>();
 let allowedKinds = new Set<number>([1, 2, 3, 4]);
-let declutterStep = 1;
+let activeFilter: FilterState = {
+  minAltM: -1000,
+  maxAltM: 2_000_000,
+  minSpeedMs: 0,
+  maxSpeedMs: 30_000,
+};
+
 const workerCtx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
 
+const passesFilter = (track: Track): boolean => {
+  if (!allowedKinds.has(track.kind)) {
+    return false;
+  }
+  if (track.alt < activeFilter.minAltM || track.alt > activeFilter.maxAltM) {
+    return false;
+  }
+  if (track.speed < activeFilter.minSpeedMs || track.speed > activeFilter.maxSpeedMs) {
+    return false;
+  }
+  return true;
+};
+
 workerCtx.onmessage = (event: MessageEvent) => {
-  const { type, deltas, kinds, cameraHeightM } = event.data;
-  
+  const { type, deltas, kinds, filter } = event.data;
+
   if (type === "TRACK_DELTA_BATCH") {
     for (const delta of deltas) {
       const normalized: Track = {
         id: delta.id,
         providerId: delta.providerId ?? delta.provider_id ?? "unknown",
-        lat: delta.position?.lat ?? 0,
-        lon: delta.position?.lon ?? 0,
+        lat: clampLat(delta.position?.lat ?? 0),
+        lon: normalizeLon(delta.position?.lon ?? 0),
         alt: delta.position?.alt ?? 0,
-        heading: delta.heading,
-        speed: delta.speed,
-        kind: delta.kind,
-        colorRgba: kindToColor(delta.kind ?? 0),
+        heading: Number(delta.heading ?? 0),
+        speed: Number(delta.speed ?? 0),
+        kind: Number(delta.kind ?? 0),
+        colorRgba: kindToColor(Number(delta.kind ?? 0)),
         tsMs: Number(delta.tsMs ?? delta.ts_ms ?? Date.now()),
       };
-      if (allowedKinds.has(normalized.kind)) {
-        trackStore.set(delta.id, normalized);
-      } else {
-        trackStore.delete(delta.id);
-      }
+      trackStore.set(delta.id, normalized);
     }
-    
-    // Periodically send full state to pack-worker or when triggered
-    // For now, let's send it every 100ms
-    sendToPackWorker();
+    sendToClusterWorker();
     return;
   }
 
   if (type === "SET_ACTIVE_KINDS" && Array.isArray(kinds)) {
     allowedKinds = new Set<number>(kinds);
-    for (const [id, track] of trackStore) {
-      if (!allowedKinds.has(track.kind)) {
-        trackStore.delete(id);
-      }
-    }
-    sendToPackWorker(true);
+    sendToClusterWorker(true);
     return;
   }
 
-  if (type === "SET_CAMERA_LOD" && typeof cameraHeightM === "number") {
-    // Simple altitude-banded declutter. Higher altitude => keep fewer points.
-    if (cameraHeightM > 12_000_000) {
-      declutterStep = 16;
-    } else if (cameraHeightM > 6_000_000) {
-      declutterStep = 12;
-    } else if (cameraHeightM > 3_000_000) {
-      declutterStep = 8;
-    } else if (cameraHeightM > 1_500_000) {
-      declutterStep = 5;
-    } else if (cameraHeightM > 700_000) {
-      declutterStep = 3;
-    } else {
-      declutterStep = 1;
-    }
-    sendToPackWorker(true);
+  if (type === "SET_FILTERS" && filter && typeof filter === "object") {
+    activeFilter = {
+      minAltM: Number(filter.minAltM ?? -1000),
+      maxAltM: Number(filter.maxAltM ?? 2_000_000),
+      minSpeedMs: Number(filter.minSpeedMs ?? 0),
+      maxSpeedMs: Number(filter.maxSpeedMs ?? 30_000),
+    };
+    sendToClusterWorker(true);
   }
 };
 
-let lastPackTime = 0;
-const sendToPackWorker = (force = false) => {
+let lastEmitMs = 0;
+const sendToClusterWorker = (force = false) => {
   const now = Date.now();
-  if (!force && now - lastPackTime < 100) return;
-  lastPackTime = now;
-  
-  const allTracks = Array.from(trackStore.values());
-  const tracks =
-    declutterStep <= 1
-      ? allTracks
-      : allTracks.filter((_, index) => index % declutterStep === 0);
-  workerCtx.postMessage({ type: "PACK_REQUEST", tracks });
+  if (!force && now - lastEmitMs < 100) {
+    return;
+  }
+  lastEmitMs = now;
+  const tracks = Array.from(trackStore.values()).filter(passesFilter);
+  workerCtx.postMessage({ type: "INDEXED_TRACKS", tracks });
 };
 
 export {};

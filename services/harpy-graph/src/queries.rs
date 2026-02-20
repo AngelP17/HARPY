@@ -13,10 +13,12 @@ pub struct QueryResult {
     pub total: i64,
 }
 
+#[derive(Clone)]
 pub struct QueryEngine {
     templates: HashMap<String, QueryTemplate>,
 }
 
+#[derive(Clone)]
 struct QueryTemplate {
     name: String,
     description: String,
@@ -25,6 +27,7 @@ struct QueryTemplate {
     count_sql: Option<String>,
 }
 
+#[derive(Clone)]
 struct ParamDef {
     name: String,
     param_type: ParamType,
@@ -43,7 +46,6 @@ impl QueryEngine {
     pub fn new() -> Self {
         let mut templates = HashMap::new();
 
-        // Template: get_evidence_chain
         templates.insert(
             "get_evidence_chain".to_string(),
             QueryTemplate {
@@ -57,8 +59,7 @@ impl QueryEngine {
                 }],
                 sql: r#"
                     WITH RECURSIVE evidence_chain AS (
-                        -- Start with the alert
-                        SELECT 
+                        SELECT
                             a.id as node_id,
                             'Alert' as node_type,
                             a.title as node_label,
@@ -67,11 +68,10 @@ impl QueryEngine {
                             0 as depth
                         FROM alerts a
                         WHERE a.id = $1
-                        
+
                         UNION ALL
-                        
-                        -- Follow links to evidence
-                        SELECT 
+
+                        SELECT
                             l.to_id as node_id,
                             l.to_type as node_type,
                             COALESCE(t.kind, l.to_id) as node_label,
@@ -90,7 +90,6 @@ impl QueryEngine {
             },
         );
 
-        // Template: get_tracks_by_sensor
         templates.insert(
             "get_tracks_by_sensor".to_string(),
             QueryTemplate {
@@ -113,7 +112,7 @@ impl QueryEngine {
                         t.provider_id
                     FROM tracks t
                     JOIN links l ON t.id = l.to_id
-                    WHERE l.from_type = 'Sensor' 
+                    WHERE l.from_type = 'Sensor'
                       AND l.from_id = $1
                       AND l.rel = 'observed_by'
                     ORDER BY t.ts_ms DESC
@@ -125,7 +124,7 @@ impl QueryEngine {
                     SELECT COUNT(DISTINCT t.id)
                     FROM tracks t
                     JOIN links l ON t.id = l.to_id
-                    WHERE l.from_type = 'Sensor' 
+                    WHERE l.from_type = 'Sensor'
                       AND l.from_id = $1
                       AND l.rel = 'observed_by'
                 "#
@@ -134,7 +133,6 @@ impl QueryEngine {
             },
         );
 
-        // Template: find_associated_tracks
         templates.insert(
             "find_associated_tracks".to_string(),
             QueryTemplate {
@@ -176,14 +174,14 @@ impl QueryEngine {
                         ) as distance_meters
                     FROM tracks t, target_track tt
                     WHERE t.id != $1
-                      AND ABS(t.ts_ms - tt.ts_ms) < 60000  -- Within 1 minute
+                      AND ABS(t.ts_ms - tt.ts_ms) < 60000
                       AND 6371000 * acos(
                           least(1, cos(radians(tt.lat)) * cos(radians(t.lat)) *
                           cos(radians(t.lon) - radians(tt.lon)) +
                           sin(radians(tt.lat)) * sin(radians(t.lat)))
-                      ) <= COALESCE($4, 10000)
+                      ) <= COALESCE($2, 10000)
                     ORDER BY distance_meters
-                    LIMIT $2 OFFSET $3
+                    LIMIT $3 OFFSET $4
                 "#
                 .to_string(),
                 count_sql: Some(
@@ -201,14 +199,13 @@ impl QueryEngine {
                           least(1, cos(radians(tt.lat)) * cos(radians(t.lat)) *
                           cos(radians(t.lon) - radians(tt.lon)) +
                           sin(radians(tt.lat)) * sin(radians(t.lat)))
-                      ) <= COALESCE($4, 10000)
+                      ) <= COALESCE($2, 10000)
                 "#
                     .to_string(),
                 ),
             },
         );
 
-        // Template: get_alerts_by_severity
         templates.insert(
             "get_alerts_by_severity".to_string(),
             QueryTemplate {
@@ -229,7 +226,7 @@ impl QueryEngine {
                     },
                 ],
                 sql: r#"
-                    SELECT 
+                    SELECT
                         a.id,
                         a.severity,
                         a.title,
@@ -240,12 +237,12 @@ impl QueryEngine {
                     FROM alerts a
                     WHERE ($1::text IS NULL OR a.severity = $1)
                       AND ($2::text IS NULL OR a.status = $2)
-                    ORDER BY 
-                        CASE a.severity 
-                            WHEN 'CRITICAL' THEN 1 
-                            WHEN 'WARNING' THEN 2 
-                            WHEN 'INFO' THEN 3 
-                            ELSE 4 
+                    ORDER BY
+                        CASE a.severity
+                            WHEN 'CRITICAL' THEN 1
+                            WHEN 'WARNING' THEN 2
+                            WHEN 'INFO' THEN 3
+                            ELSE 4
                         END,
                         a.ts_ms DESC
                     LIMIT $3 OFFSET $4
@@ -263,69 +260,91 @@ impl QueryEngine {
             },
         );
 
-        // Template: get_track_history
+        let track_history_sql = r#"
+            SELECT
+                td.id,
+                td.track_id,
+                td.lat,
+                td.lon,
+                td.alt,
+                td.heading,
+                td.speed,
+                td.ts_ms,
+                td.provider_id,
+                td.meta
+            FROM track_deltas td
+            WHERE td.track_id = $1
+              AND ($2::bigint IS NULL OR td.ts_ms >= $2)
+              AND ($3::bigint IS NULL OR td.ts_ms <= $3)
+            ORDER BY td.ts_ms DESC
+            LIMIT $4 OFFSET $5
+        "#
+        .to_string();
+
+        let track_history_count_sql = r#"
+            SELECT COUNT(*)
+            FROM track_deltas td
+            WHERE td.track_id = $1
+              AND ($2::bigint IS NULL OR td.ts_ms >= $2)
+              AND ($3::bigint IS NULL OR td.ts_ms <= $3)
+        "#
+        .to_string();
+
+        let track_history_params = vec![
+            ParamDef {
+                name: "track_id".to_string(),
+                param_type: ParamType::String,
+                required: true,
+                description: "Track ID".to_string(),
+            },
+            ParamDef {
+                name: "start_ts_ms".to_string(),
+                param_type: ParamType::Integer,
+                required: false,
+                description: "Start timestamp".to_string(),
+            },
+            ParamDef {
+                name: "end_ts_ms".to_string(),
+                param_type: ParamType::Integer,
+                required: false,
+                description: "End timestamp".to_string(),
+            },
+        ];
+
         templates.insert(
             "get_track_history".to_string(),
             QueryTemplate {
                 name: "get_track_history".to_string(),
                 description: "Get position history for a track".to_string(),
-                params: vec![
-                    ParamDef {
-                        name: "track_id".to_string(),
-                        param_type: ParamType::String,
-                        required: true,
-                        description: "Track ID".to_string(),
-                    },
-                    ParamDef {
-                        name: "start_ts_ms".to_string(),
-                        param_type: ParamType::Integer,
-                        required: false,
-                        description: "Start timestamp".to_string(),
-                    },
-                    ParamDef {
-                        name: "end_ts_ms".to_string(),
-                        param_type: ParamType::Integer,
-                        required: false,
-                        description: "End timestamp".to_string(),
-                    },
-                ],
-                sql: r#"
-                    SELECT 
-                        td.id,
-                        td.track_id,
-                        td.lat,
-                        td.lon,
-                        td.alt,
-                        td.ts_ms,
-                        td.provider_id
-                    FROM track_deltas td
-                    WHERE td.track_id = $1
-                      AND ($4::bigint IS NULL OR td.ts_ms >= $4)
-                      AND ($5::bigint IS NULL OR td.ts_ms <= $5)
-                    ORDER BY td.ts_ms DESC
-                    LIMIT $2 OFFSET $3
-                "#
-                .to_string(),
-                count_sql: Some(
-                    r#"
-                    SELECT COUNT(*)
-                    FROM track_deltas
-                    WHERE track_id = $1
-                      AND ($4::bigint IS NULL OR ts_ms >= $4)
-                      AND ($5::bigint IS NULL OR ts_ms <= $5)
-                "#
-                    .to_string(),
-                ),
+                params: track_history_params.clone(),
+                sql: track_history_sql.clone(),
+                count_sql: Some(track_history_count_sql.clone()),
             },
         );
 
-        // Template: search_tracks
+        templates.insert(
+            "track_timeline".to_string(),
+            QueryTemplate {
+                name: "track_timeline".to_string(),
+                description: "Alias for get_track_history used by export tooling".to_string(),
+                params: track_history_params,
+                sql: track_history_sql,
+                count_sql: Some(track_history_count_sql),
+            },
+        );
+
         templates.insert(
             "search_tracks".to_string(),
             QueryTemplate {
                 name: "search_tracks".to_string(),
                 description: "Search tracks by various criteria".to_string(),
                 params: vec![
+                    ParamDef {
+                        name: "id".to_string(),
+                        param_type: ParamType::String,
+                        required: false,
+                        description: "Exact track ID".to_string(),
+                    },
                     ParamDef {
                         name: "kind".to_string(),
                         param_type: ParamType::String,
@@ -358,34 +377,38 @@ impl QueryEngine {
                     },
                 ],
                 sql: r#"
-                    SELECT 
+                    SELECT
                         t.id,
                         t.kind,
                         t.lat,
                         t.lon,
                         t.alt,
+                        t.heading,
+                        t.speed,
                         t.ts_ms,
                         t.provider_id,
                         t.meta
                     FROM tracks t
-                    WHERE ($1::text IS NULL OR t.kind = $1)
-                      AND ($4::float8 IS NULL OR t.lat >= $4)
-                      AND ($5::float8 IS NULL OR t.lat <= $5)
-                      AND ($6::float8 IS NULL OR t.lon >= $6)
-                      AND ($7::float8 IS NULL OR t.lon <= $7)
+                    WHERE ($1::text IS NULL OR t.id = $1)
+                      AND ($2::text IS NULL OR t.kind = $2)
+                      AND ($3::float8 IS NULL OR t.lat >= $3)
+                      AND ($4::float8 IS NULL OR t.lat <= $4)
+                      AND ($5::float8 IS NULL OR t.lon >= $5)
+                      AND ($6::float8 IS NULL OR t.lon <= $6)
                     ORDER BY t.ts_ms DESC
-                    LIMIT $2 OFFSET $3
+                    LIMIT $7 OFFSET $8
                 "#
                 .to_string(),
                 count_sql: Some(
                     r#"
                     SELECT COUNT(*)
                     FROM tracks t
-                    WHERE ($1::text IS NULL OR t.kind = $1)
-                      AND ($4::float8 IS NULL OR t.lat >= $4)
-                      AND ($5::float8 IS NULL OR t.lat <= $5)
-                      AND ($6::float8 IS NULL OR t.lon >= $6)
-                      AND ($7::float8 IS NULL OR t.lon <= $7)
+                    WHERE ($1::text IS NULL OR t.id = $1)
+                      AND ($2::text IS NULL OR t.kind = $2)
+                      AND ($3::float8 IS NULL OR t.lat >= $3)
+                      AND ($4::float8 IS NULL OR t.lat <= $4)
+                      AND ($5::float8 IS NULL OR t.lon >= $5)
+                      AND ($6::float8 IS NULL OR t.lon <= $6)
                 "#
                     .to_string(),
                 ),
@@ -400,7 +423,8 @@ impl QueryEngine {
     }
 
     pub fn list_templates(&self) -> Vec<TemplateInfo> {
-        self.templates
+        let mut templates = self
+            .templates
             .values()
             .map(|t| TemplateInfo {
                 name: t.name.clone(),
@@ -416,7 +440,10 @@ impl QueryEngine {
                     })
                     .collect(),
             })
-            .collect()
+            .collect::<Vec<_>>();
+
+        templates.sort_by(|a, b| a.name.cmp(&b.name));
+        templates
     }
 
     pub async fn execute(
@@ -427,91 +454,165 @@ impl QueryEngine {
         limit: i64,
         offset: i64,
     ) -> anyhow::Result<QueryResult> {
+        if !params.is_object() && !params.is_null() {
+            return Err(anyhow::anyhow!("Params must be a JSON object"));
+        }
+
         let template = self
             .templates
             .get(template_name)
             .ok_or_else(|| anyhow::anyhow!("Unknown template: {}", template_name))?;
 
-        // Validate and extract parameters
-        let param_values = self.extract_params(template, params)?;
-
-        // Build query with pagination parameters
-        let mut query_params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send + Sync>> =
-            Vec::new();
-
-        // Add template-specific params first
-        for param_def in &template.params {
-            if let Some(value) = param_values.get(&param_def.name) {
-                query_params.push(Box::new(value.clone()));
-            } else {
-                // Push NULL for missing optional params
-                query_params.push(Box::new(None::<String>));
+        let (rows, total) = match template_name {
+            "get_evidence_chain" => {
+                let alert_id = required_string(params, "alert_id")?;
+                let rows = sqlx::query(&template.sql)
+                    .bind(&alert_id)
+                    .fetch_all(pool)
+                    .await?;
+                let total = rows.len() as i64;
+                (rows, total)
             }
-        }
+            "get_tracks_by_sensor" => {
+                let sensor_id = required_string(params, "sensor_id")?;
+                let rows = sqlx::query(&template.sql)
+                    .bind(&sensor_id)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?;
+                let total = sqlx::query_scalar::<_, i64>(
+                    template
+                        .count_sql
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("missing count_sql"))?,
+                )
+                .bind(&sensor_id)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(rows.len() as i64);
+                (rows, total)
+            }
+            "find_associated_tracks" => {
+                let track_id = required_string(params, "track_id")?;
+                let max_distance = optional_f64(params, "max_distance_meters")?;
+                let rows = sqlx::query(&template.sql)
+                    .bind(&track_id)
+                    .bind(max_distance)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?;
+                let total = sqlx::query_scalar::<_, i64>(
+                    template
+                        .count_sql
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("missing count_sql"))?,
+                )
+                .bind(&track_id)
+                .bind(max_distance)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(rows.len() as i64);
+                (rows, total)
+            }
+            "get_alerts_by_severity" => {
+                let severity = optional_string(params, "severity")?;
+                let status = optional_string(params, "status")?;
+                let rows = sqlx::query(&template.sql)
+                    .bind(severity.clone())
+                    .bind(status.clone())
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?;
+                let total = sqlx::query_scalar::<_, i64>(
+                    template
+                        .count_sql
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("missing count_sql"))?,
+                )
+                .bind(severity)
+                .bind(status)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(rows.len() as i64);
+                (rows, total)
+            }
+            "get_track_history" | "track_timeline" => {
+                let track_id = required_string(params, "track_id")?;
+                let start_ts_ms = optional_i64(params, "start_ts_ms")?;
+                let end_ts_ms = optional_i64(params, "end_ts_ms")?;
+                let rows = sqlx::query(&template.sql)
+                    .bind(&track_id)
+                    .bind(start_ts_ms)
+                    .bind(end_ts_ms)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?;
+                let total = sqlx::query_scalar::<_, i64>(
+                    template
+                        .count_sql
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("missing count_sql"))?,
+                )
+                .bind(&track_id)
+                .bind(start_ts_ms)
+                .bind(end_ts_ms)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(rows.len() as i64);
+                (rows, total)
+            }
+            "search_tracks" => {
+                let id = optional_string(params, "id")?;
+                let kind = optional_string(params, "kind")?;
+                let min_lat = optional_f64(params, "min_lat")?;
+                let max_lat = optional_f64(params, "max_lat")?;
+                let min_lon = optional_f64(params, "min_lon")?;
+                let max_lon = optional_f64(params, "max_lon")?;
 
-        // Add pagination params (limit and offset are always last two)
-        query_params.push(Box::new(limit));
-        query_params.push(Box::new(offset));
+                let rows = sqlx::query(&template.sql)
+                    .bind(id.clone())
+                    .bind(kind.clone())
+                    .bind(min_lat)
+                    .bind(max_lat)
+                    .bind(min_lon)
+                    .bind(max_lon)
+                    .bind(limit)
+                    .bind(offset)
+                    .fetch_all(pool)
+                    .await?;
 
-        // Execute count query if available
-        let total = if let Some(_count_sql) = &template.count_sql {
-            // Simplified count - just use the number of rows returned
-            // Full implementation would execute count query with proper parameter binding
-            -1
-        } else {
-            -1 // Unknown total
+                let total = sqlx::query_scalar::<_, i64>(
+                    template
+                        .count_sql
+                        .as_deref()
+                        .ok_or_else(|| anyhow::anyhow!("missing count_sql"))?,
+                )
+                .bind(id)
+                .bind(kind)
+                .bind(min_lat)
+                .bind(max_lat)
+                .bind(min_lon)
+                .bind(max_lon)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(rows.len() as i64);
+
+                (rows, total)
+            }
+            _ => {
+                return Err(anyhow::anyhow!("Unsupported template: {}", template_name));
+            }
         };
 
-        // Execute main query
-        let rows = sqlx::query(&template.sql)
-            .bind(limit)
-            .bind(offset)
-            .fetch_all(pool)
-            .await?;
-
         let results: Vec<Value> = rows.into_iter().map(|row| self.row_to_json(row)).collect();
-
         Ok(QueryResult {
             rows: results,
             total,
         })
-    }
-
-    fn extract_params(
-        &self,
-        template: &QueryTemplate,
-        params: &Value,
-    ) -> anyhow::Result<HashMap<String, String>> {
-        let mut result = HashMap::new();
-        let params_obj = params
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Params must be a JSON object"))?;
-
-        for param_def in &template.params {
-            if let Some(value) = params_obj.get(&param_def.name) {
-                let str_value = match &param_def.param_type {
-                    ParamType::String => value.as_str().map(|s| s.to_string()),
-                    ParamType::Integer => value.as_i64().map(|i| i.to_string()),
-                    ParamType::Float => value.as_f64().map(|f| f.to_string()),
-                };
-
-                if let Some(v) = str_value {
-                    result.insert(param_def.name.clone(), v);
-                } else if param_def.required {
-                    return Err(anyhow::anyhow!(
-                        "Required parameter '{}' has invalid type",
-                        param_def.name
-                    ));
-                }
-            } else if param_def.required {
-                return Err(anyhow::anyhow!(
-                    "Missing required parameter: {}",
-                    param_def.name
-                ));
-            }
-        }
-
-        Ok(result)
     }
 
     fn row_to_json(&self, row: sqlx::postgres::PgRow) -> Value {
@@ -565,6 +666,49 @@ impl QueryEngine {
     }
 }
 
+fn required_string(params: &Value, key: &str) -> anyhow::Result<String> {
+    let value = params
+        .get(key)
+        .ok_or_else(|| anyhow::anyhow!("Missing required parameter: {}", key))?;
+    value
+        .as_str()
+        .map(ToString::to_string)
+        .ok_or_else(|| anyhow::anyhow!("Parameter '{}' must be a string", key))
+}
+
+fn optional_string(params: &Value, key: &str) -> anyhow::Result<Option<String>> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(value) if value.is_null() => Ok(None),
+        Some(value) => value
+            .as_str()
+            .map(|v| Some(v.to_string()))
+            .ok_or_else(|| anyhow::anyhow!("Parameter '{}' must be a string", key)),
+    }
+}
+
+fn optional_i64(params: &Value, key: &str) -> anyhow::Result<Option<i64>> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(value) if value.is_null() => Ok(None),
+        Some(value) => value
+            .as_i64()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("Parameter '{}' must be an integer", key)),
+    }
+}
+
+fn optional_f64(params: &Value, key: &str) -> anyhow::Result<Option<f64>> {
+    match params.get(key) {
+        None => Ok(None),
+        Some(value) if value.is_null() => Ok(None),
+        Some(value) => value
+            .as_f64()
+            .map(Some)
+            .ok_or_else(|| anyhow::anyhow!("Parameter '{}' must be a float", key)),
+    }
+}
+
 impl std::fmt::Debug for ParamType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -572,5 +716,33 @@ impl std::fmt::Debug for ParamType {
             ParamType::Integer => write!(f, "integer"),
             ParamType::Float => write!(f, "float"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_optional_parsers() {
+        let params = json!({
+            "name": "abc",
+            "count": 42,
+            "distance": 12.5,
+        });
+        assert_eq!(required_string(&params, "name").expect("name"), "abc");
+        assert_eq!(optional_i64(&params, "count").expect("count"), Some(42));
+        assert_eq!(
+            optional_f64(&params, "distance").expect("distance"),
+            Some(12.5)
+        );
+        assert_eq!(optional_string(&params, "missing").expect("missing"), None);
+    }
+
+    #[test]
+    fn test_templates_include_track_timeline_alias() {
+        let engine = QueryEngine::new();
+        assert!(engine.is_valid_template("get_track_history"));
+        assert!(engine.is_valid_template("track_timeline"));
     }
 }

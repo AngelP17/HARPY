@@ -43,6 +43,7 @@ const AlertStack: React.FC = () => {
             className={clsx(styles.alertItem, getSeverityColor(alert.severity), {
               [styles.alertSelected]: selectedAlertId === alert.id
             })}
+            data-testid={`alert-item-${alert.id}`}
             onClick={() => {
               const nextSelected = selectedAlertId === alert.id ? null : alert.id;
               setSelectedAlertId(nextSelected);
@@ -101,6 +102,7 @@ const AlertStack: React.FC = () => {
                               <button
                                 type="button"
                                 className={styles.evidenceAction}
+                                data-testid={`alert-focus-${id}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setFocusTrackId(fromTrack ?? toTrack);
@@ -112,6 +114,7 @@ const AlertStack: React.FC = () => {
                               <button
                                 type="button"
                                 className={styles.evidenceAction}
+                                data-testid={`alert-seek-${id}`}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   setIsLive(false);

@@ -1,6 +1,8 @@
 import { create } from "zustand";
 
 export type VisionMode = "NORMAL" | "EO" | "CRT" | "NVG" | "FLIR";
+export type AltitudeBand = "ALL" | "LOW" | "MID" | "HIGH" | "SPACE";
+export type SpeedBand = "ALL" | "STATIC" | "SLOW" | "FAST" | "HYPER";
 
 export interface ProviderHealth {
   providerId: string;
@@ -73,11 +75,46 @@ export interface CameraPose {
   roll: number;
 }
 
+export interface CommandFeedback {
+  id: number;
+  title: string;
+  detail: string;
+  severity: "INFO" | "SUCCESS" | "ERROR";
+  atMs: number;
+}
+
+const E2E_SEED_ENABLED = process.env.NEXT_PUBLIC_E2E_SEED === "true";
+const E2E_SEED_TS_MS = 1_771_625_797_000;
+
+const SEEDED_ALERT: Alert = {
+  id: "e2e-alert-1",
+  title: "E2E Alert: Converging Tracks",
+  description: "Synthetic alert for evidence-chain interaction testing.",
+  severity: "ALERT_SEVERITY_WARNING",
+  tsMs: E2E_SEED_TS_MS,
+  evidenceLinkIds: ["e2e-link-1"],
+};
+
+const SEEDED_LINK: EvidenceLink = {
+  id: "e2e-link-1",
+  fromType: "NODE_TYPE_TRACK",
+  fromId: "e2e-track-1",
+  rel: "observed_by",
+  toType: "NODE_TYPE_SENSOR",
+  toId: "e2e-sensor-1",
+  tsMs: E2E_SEED_TS_MS,
+};
+
 interface AppState {
   visionMode: VisionMode;
   setVisionMode: (mode: VisionMode) => void;
   layers: string[];
   toggleLayer: (layer: string) => void;
+  setLayers: (layers: string[]) => void;
+  altitudeBand: AltitudeBand;
+  setAltitudeBand: (band: AltitudeBand) => void;
+  speedBand: SpeedBand;
+  setSpeedBand: (band: SpeedBand) => void;
   connectionStatus: "CONNECTED" | "DISCONNECTED" | "CONNECTING";
   setConnectionStatus: (status: "CONNECTED" | "DISCONNECTED" | "CONNECTING") => void;
   providerStatus: Record<string, ProviderHealth>;
@@ -140,6 +177,10 @@ interface AppState {
   setSeekMeta: (seekMeta: SeekMeta) => void;
   cameraPose: CameraPose | null;
   setCameraPose: (pose: CameraPose | null) => void;
+  requestedCameraPose: CameraPose | null;
+  setRequestedCameraPose: (pose: CameraPose | null) => void;
+  commandFeedback: CommandFeedback | null;
+  setCommandFeedback: (feedback: CommandFeedback | null) => void;
 }
 
 export const useStore = create<AppState>((set) => ({
@@ -152,6 +193,11 @@ export const useStore = create<AppState>((set) => ({
         ? state.layers.filter((l) => l !== layer)
         : [...state.layers, layer],
     })),
+  setLayers: (layers) => set({ layers }),
+  altitudeBand: "ALL",
+  setAltitudeBand: (altitudeBand) => set({ altitudeBand }),
+  speedBand: "ALL",
+  setSpeedBand: (speedBand) => set({ speedBand }),
   connectionStatus: "DISCONNECTED",
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   providerStatus: {},
@@ -164,12 +210,18 @@ export const useStore = create<AppState>((set) => ({
     })),
   dataPlaneStats: {
     wsRttMs: null,
-    throughputTps: 0,
+    throughputTps: E2E_SEED_ENABLED ? 84 : 0,
     lastBatchSize: 0,
     alertsPerSec: 0,
-    lastMessageTsMs: null,
-    renderedTrackCount: 0,
-    renderedByKind: {},
+    lastMessageTsMs: E2E_SEED_ENABLED ? E2E_SEED_TS_MS : null,
+    renderedTrackCount: E2E_SEED_ENABLED ? 6123 : 0,
+    renderedByKind: E2E_SEED_ENABLED
+      ? {
+          AIRCRAFT: 6000,
+          SATELLITE: 180,
+          GROUND: 54,
+        }
+      : ({} as Record<string, number>),
     relayBackpressureDropped: 0,
     relayBackpressureSent: 0,
     relayBackpressureHighPriority: 0,
@@ -239,11 +291,11 @@ export const useStore = create<AppState>((set) => ({
   setCurrentTimeMs: (time) => set({ currentTimeMs: time }),
 
   // Alert Defaults
-  alerts: [],
+  alerts: E2E_SEED_ENABLED ? [SEEDED_ALERT] : [],
   addAlert: (alert) => set((state) => ({ alerts: [alert, ...state.alerts].slice(0, 50) })),
   selectedAlertId: null,
   setSelectedAlertId: (id) => set({ selectedAlertId: id }),
-  linksById: {},
+  linksById: E2E_SEED_ENABLED ? { [SEEDED_LINK.id]: SEEDED_LINK } : {},
   upsertLink: (link) =>
     set((state) => ({
       linksById: {
@@ -282,4 +334,8 @@ export const useStore = create<AppState>((set) => ({
   setSeekMeta: (seekMeta) => set({ seekMeta }),
   cameraPose: null,
   setCameraPose: (pose) => set({ cameraPose: pose }),
+  requestedCameraPose: null,
+  setRequestedCameraPose: (pose) => set({ requestedCameraPose: pose }),
+  commandFeedback: null,
+  setCommandFeedback: (feedback) => set({ commandFeedback: feedback }),
 }));

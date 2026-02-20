@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect } from "react";
-import { useStore, VisionMode } from "@/store/useStore";
+import { useStore, VisionMode, AltitudeBand, SpeedBand } from "@/store/useStore";
 
 const URLManager: React.FC = () => {
   const visionMode = useStore((state) => state.visionMode);
   const setVisionMode = useStore((state) => state.setVisionMode);
   const layers = useStore((state) => state.layers);
+  const setLayers = useStore((state) => state.setLayers);
+  const altitudeBand = useStore((state) => state.altitudeBand);
+  const setAltitudeBand = useStore((state) => state.setAltitudeBand);
+  const speedBand = useStore((state) => state.speedBand);
+  const setSpeedBand = useStore((state) => state.setSpeedBand);
   const isLive = useStore((state) => state.isLive);
   const setIsLive = useStore((state) => state.setIsLive);
   const isPlaying = useStore((state) => state.isPlaying);
@@ -38,8 +43,18 @@ const URLManager: React.FC = () => {
           .map((entry) => entry.trim())
           .filter((entry) => entry.length > 0);
         if (parsedLayers.length > 0) {
-          useStore.setState({ layers: parsedLayers });
+          setLayers(parsedLayers);
         }
+      }
+
+      const parsedAltitudeBand = params.get("ab");
+      if (parsedAltitudeBand) {
+        setAltitudeBand(parsedAltitudeBand as AltitudeBand);
+      }
+
+      const parsedSpeedBand = params.get("sb");
+      if (parsedSpeedBand) {
+        setSpeedBand(parsedSpeedBand as SpeedBand);
       }
 
       const live = params.get("live");
@@ -75,7 +90,17 @@ const URLManager: React.FC = () => {
     } catch (e) {
       console.error("[URL] Failed to parse hash", e);
     }
-  }, [setCameraPose, setCurrentTimeMs, setIsLive, setIsPlaying, setPlaybackRate, setVisionMode]);
+  }, [
+    setAltitudeBand,
+    setCameraPose,
+    setCurrentTimeMs,
+    setIsLive,
+    setIsPlaying,
+    setLayers,
+    setPlaybackRate,
+    setSpeedBand,
+    setVisionMode,
+  ]);
 
   // Sync state to URL
   useEffect(() => {
@@ -84,6 +109,8 @@ const URLManager: React.FC = () => {
     const params = new URLSearchParams();
     params.set("v", visionMode);
     params.set("l", layers.join(","));
+    params.set("ab", altitudeBand);
+    params.set("sb", speedBand);
     params.set("live", isLive ? "1" : "0");
     params.set("play", isPlaying ? "1" : "0");
     params.set("rate", playbackRate.toString());
@@ -106,7 +133,7 @@ const URLManager: React.FC = () => {
     if (window.location.hash !== newHash) {
       window.history.replaceState(null, "", newHash);
     }
-  }, [visionMode, layers, isLive, isPlaying, playbackRate, currentTimeMs, cameraPose]);
+  }, [visionMode, layers, altitudeBand, speedBand, isLive, isPlaying, playbackRate, currentTimeMs, cameraPose]);
 
   return null;
 };

@@ -168,6 +168,7 @@ fn validate_graph_query(params: &serde_json::Value) -> Result<(), String> {
         "find_associated_tracks",
         "get_alerts_by_severity",
         "get_track_history",
+        "track_timeline",
         "search_tracks",
     ]
     .iter()

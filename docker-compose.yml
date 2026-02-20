@@ -222,6 +222,23 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional CV / privacy-filter service
+  harpy-detect:
+    build:
+      context: .
+      dockerfile: services/harpy-detect/Dockerfile
+    container_name: harpy-detect
+    ports:
+      - "8085:8085"
+    environment:
+      - HTTP_PORT=8085
+      - DEFAULT_PRIVACY_MODE=${DETECT_DEFAULT_PRIVACY_MODE:-blur}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   postgres_data:
   redis_data:

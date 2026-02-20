@@ -268,18 +268,18 @@ graph TD
   - Verify:
     - Redis channel traffic + relay fanout observed.
 
-- [ ] `B3-3` Graph query API hardened.
+- [x] `B3-3` Graph query API hardened.
   - Acceptance:
     - Allow-listed templates only.
     - Pagination + parameter validation.
   - Verify:
-    - Positive/negative API tests.
+    - Positive/negative API tests (`cargo test --workspace`).
 
-- [ ] `B3-4` Audit logging for operator actions.
+- [x] `B3-4` Audit logging for operator actions.
   - Acceptance:
     - Graph query actions insert into `audit_log` with actor/action/details.
   - Verify:
-    - SQL query on `audit_log` returns expected rows.
+    - SQL query on `audit_log` returns expected rows; audit insert paths covered in service tests.
 
 ---
 
@@ -385,24 +385,24 @@ graph TD
     style B4_5 fill:#ffccbc
 ```
 
-- [ ] `B4-1` AIP execution guardrails complete.
+- [x] `B4-1` AIP execution guardrails complete.
   - Acceptance:
     - Tool allow-list + strict arg validation + confirmation gate for scene-altering actions.
   - Verify:
-    - Tests for blocked tool, invalid args, and missing confirmation.
+    - Tests for blocked tool, invalid args, and missing confirmation (`cargo test --workspace`).
 
-- [ ] `B4-2` Signed export workflow.
+- [x] `B4-2` Signed export workflow.
   - Acceptance:
     - Export endpoint issues signed token + watermark metadata.
     - Verification path documented.
   - Verify:
-    - Token decodes and includes expected claims.
+    - Token decodes and includes expected claims (`/graph/export/verify`).
 
-- [ ] `B4-3` RBAC + ABAC enforcement.
+- [x] `B4-3` RBAC + ABAC enforcement.
   - Acceptance:
     - Role and attribute checks applied to graph/aip sensitive endpoints.
   - Verify:
-    - Unauthorized requests fail; authorized requests pass.
+    - Unauthorized requests fail; authorized requests pass (unit tests + manual API checks).
 
 - [ ] `B4-4` Enterprise deployment artifacts validated.
   - Acceptance:
@@ -413,7 +413,7 @@ graph TD
     - `kubectl kustomize deploy/k8s/govcloud`
     - `helm template harpy deploy/helm/harpy`
 
-- [ ] `B4-5` Optional `harpy-detect` service integration.
+- [x] `B4-5` Optional `harpy-detect` service integration.
   - Acceptance:
     - On-demand detection endpoint available with privacy filters.
   - Verify:

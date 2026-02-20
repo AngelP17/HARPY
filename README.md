@@ -762,14 +762,14 @@ gantt
 - [x] Workspace structure: `apps/web`, `services/*`, `proto`, `packages/shared-types`.
 - [x] Define `harpy.proto` v1 contracts (`TrackDeltaBatch`, `AlertUpsert`, `ProviderStatus`, `SnapshotMeta`, `LinkUpsert`).
 - [x] Create deterministic mock providers (ADS-B + TLE mock streamer in frontend).
-- [ ] Configure local stack (`postgres + redis + relay + ingest`) in docker-compose.
-- [ ] Configure CI (`lint`, `test`, `build`, perf checks for bundle size + worker compile).
+- [x] Configure local stack (`postgres + redis + relay + ingest`) in docker-compose.
+- [x] Configure CI (`lint`, `test`, `build`, frontend build, compose smoke checks).
 
 ### Phase 1
 
 - [x] Frontend shell: Cesium Viewer + HUD chrome (layers, controls, data link, mode bar).
 - [x] Vision mode chain (EO/CRT/NVG/FLIR) with `PostProcessStage` controls.
-- [x] Worker pipeline: `ws-decode -> track-index -> pack -> primitives`.
+- [x] Worker pipeline: `ws-decode -> track-index -> cluster -> pack -> primitives`.
 - [ ] Layer toggles drive subscription messages (connected to mock but not to WS).
 - [ ] Clustering v0 by mission semantics (aircraft, satellites, cameras).
 - [ ] `harpy-relay` fanout with auth placeholder, subscription registry, backpressure.

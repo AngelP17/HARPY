@@ -12,11 +12,22 @@ const CesiumViewer = dynamic(() => import("@/components/Map/CesiumViewer"), {
 
 export default function Home() {
   const ionToken = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN;
+  const disableCesium =
+    process.env.NEXT_PUBLIC_DISABLE_CESIUM === "true"
+    || process.env.NEXT_PUBLIC_E2E_SEED === "true";
 
   return (
     <main style={{ position: "relative", width: "100vw", height: "100vh" }}>
       <URLManager />
-      <CesiumViewer ionToken={ionToken} />
+      {disableCesium ? (
+        <div
+          className="cesium-viewer"
+          data-testid="cesium-disabled"
+          style={{ backgroundColor: "#05080d" }}
+        />
+      ) : (
+        <CesiumViewer ionToken={ionToken} />
+      )}
       <HUD />
     </main>
   );

@@ -35,11 +35,13 @@ interface MarketSnapshotResponse {
   crypto: MarketInstrument[];
 }
 
+const FALLBACK_TS_MS = 1_771_625_797_000;
+
 const defaultNewsBrief = (): NewsBriefResponse => ({
   source: "local-fallback",
   region: "global",
   query: "global",
-  generated_at_ms: Date.now(),
+  generated_at_ms: FALLBACK_TS_MS,
   sentiment_score: 0.5,
   sentiment_label: "NEUTRAL",
   headlines: [
@@ -47,14 +49,14 @@ const defaultNewsBrief = (): NewsBriefResponse => ({
       source: "HARPY",
       title: "INTEL_LINK_STANDBY: Awaiting uplink or API key",
       url: "#",
-      published_ts_ms: Date.now(),
+      published_ts_ms: FALLBACK_TS_MS,
     },
   ],
 });
 
 const defaultMarketSnapshot = (): MarketSnapshotResponse => ({
   source: "local-fallback",
-  generated_at_ms: Date.now(),
+  generated_at_ms: FALLBACK_TS_MS,
   commodities: [
     { symbol: "WTI", price_usd: 78.0, change_24h_pct: 0.0 },
     { symbol: "GOLD", price_usd: 2110.0, change_24h_pct: 0.0 },
@@ -83,8 +85,6 @@ const IntelPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
-  const isOfflineMode = streamMode === "offline";
   const aipUrl = process.env.NEXT_PUBLIC_AIP_URL || "http://localhost:8084";
 
   const sentimentBadgeClass = useMemo(
@@ -99,14 +99,6 @@ const IntelPanel: React.FC = () => {
   );
 
   const refreshIntel = useCallback(async () => {
-    if (isOfflineMode) {
-      setNews(defaultNewsBrief());
-      setMarket(defaultMarketSnapshot());
-      setError(null);
-      setLoading(false);
-      return;
-    }
-
     try {
       const [newsResponse, marketResponse] = await Promise.all([
         fetch(`${aipUrl}/intel/news`, { cache: "no-store" }),
@@ -131,7 +123,7 @@ const IntelPanel: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [aipUrl, isOfflineMode]);
+  }, [aipUrl]);
 
   useEffect(() => {
     void refreshIntel();

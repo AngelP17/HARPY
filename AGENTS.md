@@ -388,7 +388,7 @@ Tasks to complete:
 2. [x] Define harpy.proto v1 contracts
 3. [x] Create deterministic mock providers (ADS-B + TLE in `harpy-ingest`)
 4. [x] Configure docker-compose (postgres + redis + minio)
-5. [ ] Set up CI (lint/test/build, bundle size checks)
+5. [x] Set up CI (lint/test/build + frontend build + compose smoke checks)
 
 ---
 
@@ -397,7 +397,7 @@ Tasks to complete:
 - [x] Next.js frontend scaffolded in `apps/web` (No Tailwind, Vanilla CSS)
 - [x] CesiumJS Primitive API integrated
 - [x] Tactical HUD chrome with vision mode chain (EO/CRT/NVG/FLIR)
-- [x] Worker-based data plane (`ws-decode -> track-index -> pack -> render`)
+- [x] Worker-based data plane (`ws-decode -> track-index -> cluster -> pack -> render`)
 - [x] Mock data stream for testing pipeline
 - [x] Shared Types package `@harpy/shared-types` with generated proto types
 

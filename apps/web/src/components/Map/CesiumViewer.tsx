@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import * as Cesium from "cesium";
 import "cesium/Source/Widgets/widgets.css";
-import { useStore, VisionMode, type SelectedTrack } from "@/store/useStore";
+import { useStore, VisionMode, AltitudeBand, SpeedBand, type SelectedTrack } from "@/store/useStore";
 import { MockStreamer } from "@/mocks/mock-streamer";
 import { harpy } from "@harpy/shared-types";
 
@@ -23,8 +23,10 @@ interface RenderPayloadMessage {
   speeds: ArrayBuffer;
   kinds: ArrayBuffer;
   colors: ArrayBuffer;
+  clusterCounts: ArrayBuffer;
   ids: string[];
   providerIds: string[];
+  labels: string[];
   count: number;
 }
 
@@ -91,6 +93,13 @@ interface RelayDebugSnapshotResponse {
 
 type StreamMode = "online" | "offline" | "hybrid";
 
+interface PositionSample {
+  lat: number;
+  lon: number;
+  alt: number;
+  tsMs: number;
+}
+
 const resolveStreamMode = (): StreamMode => {
   const raw = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
   if (raw === "online" || raw === "offline" || raw === "hybrid") {
@@ -153,8 +162,8 @@ const isLinkUpsertMessage = (data: unknown): data is DecodedLinkUpsertMessage =>
   return message.type === "LINK_UPSERT" && typeof message.link === "object" && message.link !== null;
 };
 
-const mapUiLayersToProto = (activeLayers: string[]): harpy.v1.LayerType[] => {
-  const mapped = new Set<harpy.v1.LayerType>();
+const mapUiLayersToProto = (activeLayers: string[]): number[] => {
+  const mapped = new Set<number>();
   for (const layer of activeLayers) {
     if (layer === "ADSB") {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_AIRCRAFT);
@@ -192,11 +201,46 @@ const mapUiLayersToTrackKinds = (activeLayers: string[]): number[] => {
   return Array.from(kinds);
 };
 
+const mapAltitudeBandToRange = (band: AltitudeBand): { minAltM: number; maxAltM: number } => {
+  if (band === "LOW") {
+    return { minAltM: -200, maxAltM: 3_500 };
+  }
+  if (band === "MID") {
+    return { minAltM: 3_500, maxAltM: 16_000 };
+  }
+  if (band === "HIGH") {
+    return { minAltM: 16_000, maxAltM: 120_000 };
+  }
+  if (band === "SPACE") {
+    return { minAltM: 120_000, maxAltM: 2_000_000 };
+  }
+  return { minAltM: -200, maxAltM: 2_000_000 };
+};
+
+const mapSpeedBandToRange = (band: SpeedBand): { minSpeedMs: number; maxSpeedMs: number } => {
+  if (band === "STATIC") {
+    return { minSpeedMs: 0, maxSpeedMs: 2 };
+  }
+  if (band === "SLOW") {
+    return { minSpeedMs: 2, maxSpeedMs: 90 };
+  }
+  if (band === "FAST") {
+    return { minSpeedMs: 90, maxSpeedMs: 600 };
+  }
+  if (band === "HYPER") {
+    return { minSpeedMs: 600, maxSpeedMs: 30_000 };
+  }
+  return { minSpeedMs: 0, maxSpeedMs: 30_000 };
+};
+
 const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewerInstance = useRef<Cesium.Viewer | null>(null);
   const trackPrimitives = useRef<Cesium.PointPrimitiveCollection | null>(null);
+  const trackLabels = useRef<Cesium.LabelCollection | null>(null);
+  const trackTrail = useRef<Cesium.PolylineCollection | null>(null);
   const trackLookup = useRef<Map<string, SelectedTrack>>(new Map());
+  const trackHistory = useRef<Map<string, PositionSample[]>>(new Map());
   const visionMode = useStore((state) => state.visionMode);
   const setConnectionStatus = useStore((state) => state.setConnectionStatus);
   const updateProviderStatus = useStore((state) => state.updateProviderStatus);
@@ -210,9 +254,14 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const setCameraPose = useStore((state) => state.setCameraPose);
   const addAlert = useStore((state) => state.addAlert);
   const setSelectedTrack = useStore((state) => state.setSelectedTrack);
+  const selectedTrack = useStore((state) => state.selectedTrack);
   const focusTrackId = useStore((state) => state.focusTrackId);
   const setFocusTrackId = useStore((state) => state.setFocusTrackId);
   const layers = useStore((state) => state.layers);
+  const altitudeBand = useStore((state) => state.altitudeBand);
+  const speedBand = useStore((state) => state.speedBand);
+  const requestedCameraPose = useStore((state) => state.requestedCameraPose);
+  const setRequestedCameraPose = useStore((state) => state.setRequestedCameraPose);
   const isLive = useStore((state) => state.isLive);
   const isPlaying = useStore((state) => state.isPlaying);
   const currentTimeMs = useStore((state) => state.currentTimeMs);
@@ -227,6 +276,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   // Workers
   const wsDecodeWorker = useRef<Worker | null>(null);
   const trackIndexWorker = useRef<Worker | null>(null);
+  const clusterWorker = useRef<Worker | null>(null);
   const packWorker = useRef<Worker | null>(null);
   
   // WebSocket reference
@@ -287,16 +337,42 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     );
   };
 
+  const renderTrailForTrack = useCallback((trackId: string | null) => {
+    const trailCollection = trackTrail.current;
+    if (!trailCollection) {
+      return;
+    }
+    trailCollection.removeAll();
+    if (!trackId) {
+      return;
+    }
+    const samples = trackHistory.current.get(trackId);
+    if (!samples || samples.length < 2) {
+      return;
+    }
+    trailCollection.add({
+      positions: samples.map((sample) => Cesium.Cartesian3.fromDegrees(sample.lon, sample.lat, sample.alt)),
+      width: 2,
+      material: Cesium.Material.fromType("Color", {
+        color: new Cesium.Color(0.49, 0.89, 1.0, 0.85),
+      }),
+    });
+  }, []);
+
   const updatePrimitives = useCallback((payload: RenderPayloadMessage) => {
-    const { positions, headings, speeds, kinds, colors, ids, providerIds, count } = payload;
+    const { positions, headings, speeds, kinds, colors, clusterCounts, ids, providerIds, labels, count } = payload;
     const posArray = new Float64Array(positions);
     const headingArray = new Float32Array(headings);
     const speedArray = new Float32Array(speeds);
     const kindArray = new Uint8Array(kinds);
     const colorArray = new Uint32Array(colors);
+    const clusterCountArray = new Uint16Array(clusterCounts);
 
-    const collection = trackPrimitives.current;
-    if (!collection) return;
+    const points = trackPrimitives.current;
+    const labelsCollection = trackLabels.current;
+    if (!points || !labelsCollection) {
+      return;
+    }
 
     const nextTrackLookup = new Map<string, SelectedTrack>();
     const kindCounts: Record<string, number> = {
@@ -306,8 +382,12 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       VESSEL: 0,
       UNKNOWN: 0,
     };
-    collection.removeAll();
-    for (let i = 0; i < count; i++) {
+
+    points.removeAll();
+    labelsCollection.removeAll();
+    const now = Date.now();
+
+    for (let i = 0; i < count; i += 1) {
       const lat = posArray[i * 3];
       const lon = posArray[i * 3 + 1];
       const alt = posArray[i * 3 + 2];
@@ -317,50 +397,95 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       }
       const providerId = providerIds[i] ?? "unknown";
       const kind = kindArray[i] ?? 0;
-      if (kind === 1) {
-        kindCounts.AIRCRAFT += 1;
-      } else if (kind === 2) {
-        kindCounts.SATELLITE += 1;
-      } else if (kind === 3) {
-        kindCounts.GROUND += 1;
-      } else if (kind === 4) {
-        kindCounts.VESSEL += 1;
-      } else {
-        kindCounts.UNKNOWN += 1;
-      }
       const heading = headingArray[i] ?? 0;
       const speed = speedArray[i] ?? 0;
+      const clusterCount = Math.max(1, clusterCountArray[i] ?? 1);
+      const isCluster = clusterCount > 1 || id.startsWith("cluster:");
+      const pointPosition = Cesium.Cartesian3.fromDegrees(lon, lat, alt);
 
-      const primitive = collection.add({
-        position: Cesium.Cartesian3.fromDegrees(lon, lat, alt),
-        pixelSize: 12,
+      if (kind === 1) {
+        kindCounts.AIRCRAFT += clusterCount;
+      } else if (kind === 2) {
+        kindCounts.SATELLITE += clusterCount;
+      } else if (kind === 3) {
+        kindCounts.GROUND += clusterCount;
+      } else if (kind === 4) {
+        kindCounts.VESSEL += clusterCount;
+      } else {
+        kindCounts.UNKNOWN += clusterCount;
+      }
+
+      const pixelSize = isCluster ? Math.min(30, 10 + Math.log2(clusterCount + 1) * 4) : 8;
+      const outlineWidth = isCluster ? 3 : 1;
+      const primitive = points.add({
+        position: pointPosition,
+        pixelSize,
         color: Cesium.Color.fromRgba(colorArray[i]),
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 2.0, 1.5e7, 0.5),
+        outlineColor: isCluster ? Cesium.Color.WHITE.withAlpha(0.9) : Cesium.Color.BLACK.withAlpha(0.5),
+        outlineWidth,
+        scaleByDistance: new Cesium.NearFarScalar(1.5e2, 2.2, 1.5e7, 0.35),
       });
       primitive.id = id;
 
-      nextTrackLookup.set(id, {
-        id,
-        providerId,
-        kind,
-        lat,
-        lon,
-        alt,
-        heading,
-        speed,
-        tsMs: Date.now(),
-      });
+      if (isCluster) {
+        labelsCollection.add({
+          position: pointPosition,
+          text: labels[i] || `${clusterCount}`,
+          font: "600 12px sans-serif",
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK.withAlpha(0.88),
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          pixelOffset: new Cesium.Cartesian2(0, -20),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new Cesium.NearFarScalar(200.0, 1.0, 30_000_000.0, 0.55),
+          translucencyByDistance: new Cesium.NearFarScalar(200.0, 1.0, 20_000_000.0, 0.12),
+        });
+      }
+
+      if (!isCluster) {
+        nextTrackLookup.set(id, {
+          id,
+          providerId,
+          kind,
+          lat,
+          lon,
+          alt,
+          heading,
+          speed,
+          tsMs: now,
+        });
+
+        const existingHistory = trackHistory.current.get(id) ?? [];
+        const previousSample = existingHistory[existingHistory.length - 1];
+        const shouldAppend =
+          !previousSample
+          || Math.abs(previousSample.lat - lat) > 0.0003
+          || Math.abs(previousSample.lon - lon) > 0.0003
+          || Math.abs(previousSample.alt - alt) > 20;
+        if (shouldAppend) {
+          const nextHistory = [...existingHistory, { lat, lon, alt, tsMs: now }].slice(-8);
+          trackHistory.current.set(id, nextHistory);
+        }
+      }
+    }
+
+    for (const id of Array.from(trackHistory.current.keys())) {
+      if (!nextTrackLookup.has(id)) {
+        trackHistory.current.delete(id);
+      }
     }
 
     trackLookup.current = nextTrackLookup;
-    setRenderedTrackStats(nextTrackLookup.size, kindCounts);
-    const selectedTrack = useStore.getState().selectedTrack;
-    if (selectedTrack && !nextTrackLookup.has(selectedTrack.id)) {
+    setRenderedTrackStats(Object.values(kindCounts).reduce((sum, value) => sum + value, 0), kindCounts);
+    const selected = useStore.getState().selectedTrack;
+    if (selected && !nextTrackLookup.has(selected.id)) {
       setSelectedTrack(null);
+      renderTrailForTrack(null);
+    } else {
+      renderTrailForTrack(selected?.id ?? null);
     }
-  }, [setRenderedTrackStats, setSelectedTrack]);
+  }, [renderTrailForTrack, setRenderedTrackStats, setSelectedTrack]);
 
   useEffect(() => {
     if (!viewerRef.current || viewerInstance.current) return;
@@ -443,16 +568,18 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     controller.enableTranslate = true;
     controller.enableTilt = true;
     controller.enableZoom = true;
-    controller.inertiaTranslate = 0.75;
-    controller.inertiaSpin = 0.75;
-    controller.inertiaZoom = 0.55;
-    controller.minimumZoomDistance = 10;
-    controller.maximumZoomDistance = 80_000_000;
+    controller.inertiaTranslate = 0.84;
+    controller.inertiaSpin = 0.84;
+    controller.inertiaZoom = 0.68;
+    controller.minimumZoomDistance = 30;
+    controller.maximumZoomDistance = 60_000_000;
     scene.backgroundColor = Cesium.Color.BLACK;
     scene.globe.baseColor = Cesium.Color.BLACK;
 
     // Initialize Primitives
     trackPrimitives.current = scene.primitives.add(new Cesium.PointPrimitiveCollection());
+    trackLabels.current = scene.primitives.add(new Cesium.LabelCollection());
+    trackTrail.current = scene.primitives.add(new Cesium.PolylineCollection());
     const pickHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
     pickHandler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
       const picked = viewer.scene.pick(click.position) as
@@ -468,19 +595,22 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
       if (!pickedId) {
         setSelectedTrack(null);
+        renderTrailForTrack(null);
         return;
       }
 
-      const selectedTrack = trackLookup.current.get(pickedId) ?? null;
-      setSelectedTrack(selectedTrack);
+      const selected = trackLookup.current.get(pickedId) ?? null;
+      setSelectedTrack(selected);
+      renderTrailForTrack(selected?.id ?? null);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     // Initialize Workers
     wsDecodeWorker.current = new Worker(new URL("@/workers/ws-decode-worker.ts", import.meta.url));
     trackIndexWorker.current = new Worker(new URL("@/workers/track-index-worker.ts", import.meta.url));
+    clusterWorker.current = new Worker(new URL("@/workers/cluster-worker.ts", import.meta.url));
     packWorker.current = new Worker(new URL("@/workers/pack-worker.ts", import.meta.url));
 
-    // Connect Pipeline: wsDecode -> trackIndex -> pack -> main
+    // Connect Pipeline: wsDecode -> trackIndex -> cluster -> pack -> main
     wsDecodeWorker.current.onmessage = (e: MessageEvent<unknown>) => {
       setLastMessageTsMs(Date.now());
       if (isProviderStatusMessage(e.data)) {
@@ -513,7 +643,8 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         trackIndexWorker.current?.postMessage(e.data);
       }
     };
-    trackIndexWorker.current.onmessage = (e: MessageEvent) => packWorker.current?.postMessage(e.data);
+    trackIndexWorker.current.onmessage = (e: MessageEvent) => clusterWorker.current?.postMessage(e.data);
+    clusterWorker.current.onmessage = (e: MessageEvent) => packWorker.current?.postMessage(e.data);
     packWorker.current.onmessage = (e: MessageEvent<RenderPayloadMessage>) => {
       if (e.data.type === "RENDER_PAYLOAD") {
         updatePrimitives(e.data);
@@ -522,6 +653,18 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     trackIndexWorker.current.postMessage({
       type: "SET_ACTIVE_KINDS",
       kinds: mapUiLayersToTrackKinds(layersRef.current),
+    });
+    const initialStore = useStore.getState();
+    const initialAltitude = mapAltitudeBandToRange(initialStore.altitudeBand);
+    const initialSpeed = mapSpeedBandToRange(initialStore.speedBand);
+    trackIndexWorker.current.postMessage({
+      type: "SET_FILTERS",
+      filter: {
+        minAltM: initialAltitude.minAltM,
+        maxAltM: initialAltitude.maxAltM,
+        minSpeedMs: initialSpeed.minSpeedMs,
+        maxSpeedMs: initialSpeed.maxSpeedMs,
+      },
     });
 
     let lastLodPush = 0;
@@ -533,7 +676,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       } else {
         lastLodPush = now;
         const height = viewer.camera.positionCartographic.height;
-        trackIndexWorker.current?.postMessage({ type: "SET_CAMERA_LOD", cameraHeightM: height });
+        clusterWorker.current?.postMessage({ type: "SET_CAMERA_LOD", cameraHeightM: height });
       }
       if (now - lastCameraPosePush >= 700) {
         lastCameraPosePush = now;
@@ -682,6 +825,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       }
       wsDecodeWorker.current?.terminate();
       trackIndexWorker.current?.terminate();
+      clusterWorker.current?.terminate();
       packWorker.current?.terminate();
     };
   }, [
@@ -696,6 +840,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     setRenderedTrackStats,
     setThroughputStats,
     setWsRttMs,
+    renderTrailForTrack,
     updatePrimitives,
     upsertLink,
     setSelectedTrack,
@@ -718,6 +863,20 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     }
   }, [isLive, layers, useWebSocket]);
 
+  useEffect(() => {
+    const altitudeRange = mapAltitudeBandToRange(altitudeBand);
+    const speedRange = mapSpeedBandToRange(speedBand);
+    trackIndexWorker.current?.postMessage({
+      type: "SET_FILTERS",
+      filter: {
+        minAltM: altitudeRange.minAltM,
+        maxAltM: altitudeRange.maxAltM,
+        minSpeedMs: speedRange.minSpeedMs,
+        maxSpeedMs: speedRange.maxSpeedMs,
+      },
+    });
+  }, [altitudeBand, speedBand]);
+
   // When paused in playback mode, push explicit seek updates.
   useEffect(() => {
     if (!useWebSocket) {
@@ -737,6 +896,10 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   }, [visionMode]);
 
   useEffect(() => {
+    renderTrailForTrack(selectedTrack?.id ?? null);
+  }, [renderTrailForTrack, selectedTrack]);
+
+  useEffect(() => {
     if (!focusTrackId || !viewerInstance.current) {
       return;
     }
@@ -749,6 +912,26 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     }
     setFocusTrackId(null);
   }, [focusTrackId, setFocusTrackId]);
+
+  useEffect(() => {
+    if (!requestedCameraPose || !viewerInstance.current) {
+      return;
+    }
+    viewerInstance.current.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        requestedCameraPose.lon,
+        requestedCameraPose.lat,
+        requestedCameraPose.alt,
+      ),
+      orientation: {
+        heading: requestedCameraPose.heading,
+        pitch: requestedCameraPose.pitch,
+        roll: requestedCameraPose.roll,
+      },
+      duration: 1.25,
+    });
+    setRequestedCameraPose(null);
+  }, [requestedCameraPose, setRequestedCameraPose]);
 
   return <div ref={viewerRef} className="cesium-viewer" />;
 };

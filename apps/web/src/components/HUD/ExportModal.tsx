@@ -15,8 +15,6 @@ const ExportModal: React.FC = () => {
   const [trackId, setTrackId] = useState("track_0");
   const [error, setError] = useState<string | null>(null);
   const [watermarkTs] = useState(() => new Date().toISOString());
-  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
-  const isOfflineMode = streamMode === "offline";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -31,31 +29,29 @@ const ExportModal: React.FC = () => {
   if (!showExport) return null;
 
   const handleExport = async () => {
-    if (isOfflineMode) {
-      setError("Export is disabled in offline mode.");
-      setToken(null);
-      return;
-    }
-
     setDownloading(true);
     setError(null);
     try {
       const graphUrl = process.env.NEXT_PUBLIC_GRAPH_URL || "http://localhost:8083";
       const response = await fetch(`${graphUrl}/graph/export`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           query: {
-            template: "track_timeline",
+            template: "get_track_history",
             params: { track_id: trackId },
             page: 1,
-            page_size: 100,
+            per_page: 100,
           },
           watermark: `HARPY-${userRole}-${watermarkTs}`,
           expires_in_secs: 900,
         }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-harpy-role": userRole,
+          "x-harpy-scopes": userRole === "ADMIN" ? "graph:query,graph:query:advanced,graph:export" : "graph:query",
+          "x-harpy-actor-id": "hud-operator",
+          "x-harpy-attrs": JSON.stringify({}),
+        },
       });
 
       if (!response.ok) {
@@ -122,8 +118,7 @@ const ExportModal: React.FC = () => {
               <button 
                 className={styles.runButton}
                 onClick={handleExport}
-                disabled={downloading || isOfflineMode}
-                title={isOfflineMode ? "Export service disabled in offline mode" : undefined}
+                disabled={downloading}
               >
                 {downloading ? "SIGNING & PACKING..." : "GENERATE_EXPORT"}
                 {!downloading && <Shield size={12} />}

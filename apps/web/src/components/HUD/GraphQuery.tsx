@@ -21,14 +21,13 @@ const GraphQuery: React.FC = () => {
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
   const setIsLive = useStore((state) => state.setIsLive);
   const setIsPlaying = useStore((state) => state.setIsPlaying);
+  const userRole = useStore((state) => state.userRole);
   
   const [selectedTemplate, setSelectedTemplate] = useState(TEMPLATES[0]);
   const [params, setParams] = useState<Record<string, string>>({});
   const [results, setResults] = useState<GraphQueryResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const streamMode = (process.env.NEXT_PUBLIC_STREAM_MODE || "hybrid").toLowerCase();
-  const isOfflineMode = streamMode === "offline";
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -60,12 +59,6 @@ const GraphQuery: React.FC = () => {
   };
 
   const handleRun = async () => {
-    if (isOfflineMode) {
-      setError("Graph query is disabled in offline mode.");
-      setResults(null);
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setResults(null);
@@ -76,12 +69,21 @@ const GraphQuery: React.FC = () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "x-harpy-role": userRole,
+          "x-harpy-scopes":
+            userRole === "ADMIN"
+              ? "graph:query,graph:query:advanced,graph:export"
+              : userRole === "OPERATOR"
+                ? "graph:query,graph:query:advanced"
+                : "graph:query",
+          "x-harpy-actor-id": "hud-operator",
+          "x-harpy-attrs": JSON.stringify({}),
         },
         body: JSON.stringify({
           template: selectedTemplate.id,
           params,
           page: 1,
-          page_size: 50,
+          per_page: 50,
         }),
       });
 
@@ -150,8 +152,7 @@ const GraphQuery: React.FC = () => {
             <button 
               className={styles.runButton}
               onClick={handleRun}
-              disabled={loading || isOfflineMode}
-              title={isOfflineMode ? "Graph service disabled in offline mode" : undefined}
+              disabled={loading}
             >
               {loading ? "EXECUTING..." : "RUN_QUERY"}
               {!loading && <Play size={12} />}

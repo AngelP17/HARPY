@@ -176,6 +176,7 @@ const Timeline: React.FC = () => {
         <button 
           className={clsx("hud-button", { [styles.liveActive]: isLive })}
           onClick={goLive}
+          data-testid="timeline-live"
         >
           <Radio size={12} className={clsx({ [styles.livePulse]: isLive })} />
           <span>LIVE</span>
@@ -183,7 +184,7 @@ const Timeline: React.FC = () => {
         
         <div className={styles.separator} />
 
-        <button className="hud-button" onClick={togglePlay}>
+        <button className="hud-button" onClick={togglePlay} data-testid="timeline-play-toggle">
           {isPlaying ? <Pause size={14} /> : <Play size={14} />}
         </button>
 
@@ -199,11 +200,12 @@ const Timeline: React.FC = () => {
                 setCurrentTimeMs(Number(e.target.value));
               }}
               disabled={isLive}
+              data-testid="timeline-scrubber"
             />
             <div className={styles.timeDisplay}>
               {formatTime(currentTimeMs)}
               {!isLive ? (
-                <span className={styles.seekMeta}>
+                <span className={styles.seekMeta} data-testid="timeline-seek-meta">
                   {seekMeta.loading
                     ? " SEEK..."
                     : seekMeta.error
@@ -229,6 +231,10 @@ const Timeline: React.FC = () => {
             className={clsx("hud-button", { [styles.activeSpeed]: playbackRate === 4 })}
             onClick={() => setPlaybackRate(4)}
           >4x</button>
+          <button 
+            className={clsx("hud-button", { [styles.activeSpeed]: playbackRate === 8 })}
+            onClick={() => setPlaybackRate(8)}
+          >8x</button>
         </div>
       </div>
     </div>

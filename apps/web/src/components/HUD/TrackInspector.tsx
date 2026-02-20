@@ -71,6 +71,8 @@ const TrackInspector: React.FC = () => {
             <span>{isNaN(selectedTrack.heading) ? "--" : `${Math.round(selectedTrack.heading)}°`}</span>
             <span>SPD</span>
             <span>{isNaN(selectedTrack.speed) ? "--" : Math.round(selectedTrack.speed)}</span>
+            <span>TS</span>
+            <span>{new Date(selectedTrack.tsMs).toISOString().substring(11, 19)}</span>
           </div>
         </div>
       ) : (

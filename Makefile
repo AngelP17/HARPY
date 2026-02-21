@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local docker-local-up docker-local-down confidence-gate lint test build perf-check proto verify clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local prod-ready-local docker-local-up docker-local-down confidence-gate lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -16,6 +16,8 @@ help:
 	@echo "  make dev-logs             - Follow backend logs"
 	@echo "  make dev-health           - Check backend health endpoints"
 	@echo "  make dev-down             - Stop local docker compose stack"
+	@echo "  make confidence-gate      - Validate WS filtering + metrics invariants"
+	@echo "  make prod-ready-local     - Full local production readiness gate"
 	@echo "  make lint         - Run Clippy linter"
 	@echo "  make test         - Run all tests"
 	@echo "  make build        - Build all services in release mode"
@@ -45,16 +47,21 @@ dev-demo: dev-up-offline
 	@cd apps/web && npm run dev:demo
 
 dev-node:
-	cargo +1.83.0 run -p harpy-node
+	cargo run -p harpy-node
 
 dev-web:
-	cd apps/web && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm install && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm run dev
+	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm ci
+	npm --prefix packages/shared-types run build
+	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm --prefix apps/web run dev
 
 dev:
 	./scripts/dev.sh
 
 prod-local:
 	./scripts/run_local_prod.sh
+
+prod-ready-local:
+	./scripts/local_production_readiness.sh
 
 docker-local-up:
 	docker compose -f docker-compose.local.yml up --build

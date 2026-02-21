@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 NODE_LOG="/tmp/harpy-node-confidence.log"
+NODE_HTTP_URL="${CONFIDENCE_GATE_NODE_URL:-http://127.0.0.1:8080}"
+NODE_WS_URL="${CONFIDENCE_GATE_WS_URL:-ws://127.0.0.1:8080/ws}"
+EXTERNAL_NODE="${CONFIDENCE_GATE_EXTERNAL_NODE:-0}"
 
 cleanup() {
   if [[ -n "${NODE_PID:-}" ]]; then
@@ -14,15 +17,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo +1.83.0 run -p harpy-node >"$NODE_LOG" 2>&1 &
-NODE_PID=$!
+if [[ "$EXTERNAL_NODE" != "1" ]]; then
+  cargo run -p harpy-node >"$NODE_LOG" 2>&1 &
+  NODE_PID=$!
+fi
 
+READY=0
 for _ in {1..40}; do
-  if curl -fsS "http://127.0.0.1:8080/health" >/dev/null 2>&1; then
+  if curl -fsS "${NODE_HTTP_URL}/health" >/dev/null 2>&1; then
+    READY=1
     break
   fi
   sleep 0.25
 done
+if [[ "$READY" -ne 1 ]]; then
+  echo "confidence_gate: node did not become healthy at ${NODE_HTTP_URL}/health"
+  if [[ -f "$NODE_LOG" ]]; then
+    echo "---- node log tail ----"
+    tail -n 80 "$NODE_LOG" || true
+    echo "-----------------------"
+  fi
+  exit 1
+fi
+
+export CONFIDENCE_GATE_NODE_URL="$NODE_HTTP_URL"
+export CONFIDENCE_GATE_WS_URL="$NODE_WS_URL"
 
 node --input-type=module <<'JS'
 let protobuf;
@@ -31,6 +50,9 @@ try {
 } catch {
   ({ default: protobuf } = await import("./packages/shared-types/node_modules/protobufjs/index.js"));
 }
+
+const nodeHttpUrl = process.env.CONFIDENCE_GATE_NODE_URL || "http://127.0.0.1:8080";
+const nodeWsUrl = process.env.CONFIDENCE_GATE_WS_URL || "ws://127.0.0.1:8080/ws";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const toU8 = async (data) => {
@@ -60,9 +82,9 @@ const result = {
   metricsSeries: {},
 };
 
-result.health = await (await fetch("http://127.0.0.1:8080/health")).json();
+result.health = await (await fetch(`${nodeHttpUrl}/health`)).json();
 
-const ws = new WebSocket("ws://127.0.0.1:8080/ws");
+const ws = new WebSocket(nodeWsUrl);
 ws.binaryType = "arraybuffer";
 let phase = "boot";
 
@@ -120,7 +142,7 @@ phase = "world";
 sendSub({ minLat: -90, minLon: -180, maxLat: 90, maxLon: 180 });
 await sleep(2300);
 
-const metricsText = await (await fetch("http://127.0.0.1:8080/metrics")).text();
+const metricsText = await (await fetch(`${nodeHttpUrl}/metrics`)).text();
 const readMetric = (name) => {
   const direct = metricsText.match(new RegExp(`^${name}\\s+([-+0-9.eE]+)$`, "m"));
   if (direct) {

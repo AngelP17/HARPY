@@ -220,6 +220,19 @@ make dev-logs
 make dev-down
 ```
 
+### Local Production-Readiness (Single Node Demo Spine)
+
+```bash
+# Run local single-node confidence checks (WS filtering + metrics)
+make confidence-gate
+
+# Build + boot local production stack and run readiness soak checks
+make prod-ready-local
+
+# Launch local production stack (without automated gate)
+make prod-local
+```
+
 ### Environment Variables (Operational)
 
 | Variable | Description | Default |

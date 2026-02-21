@@ -19,6 +19,7 @@ use harpy_proto::harpy::v1::{
     envelope::Payload, BoundingBox, CircuitState, Envelope, Freshness, LayerType, ProviderStatus,
     SubscriptionAck, SubscriptionMode, TrackDelta, TrackDeltaBatch, TrackKind,
 };
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use prost::Message as ProstMessage;
 use serde::Serialize;
 use std::{
@@ -40,7 +41,8 @@ struct AppState {
     tx: broadcast::Sender<NodeEvent>,
     subs: Arc<DashMap<String, ClientSub>>,
     provider_snapshots: Arc<DashMap<String, ProviderSnapshot>>,
-    metrics: Arc<NodeMetrics>,
+    metrics: PrometheusHandle,
+    debug_counters: Arc<DebugCounters>,
 }
 
 #[derive(Clone)]
@@ -72,48 +74,9 @@ impl Default for ClientSub {
 }
 
 #[derive(Default)]
-struct NodeMetrics {
-    ws_connections: AtomicU64,
+struct DebugCounters {
     tracks_sent: AtomicU64,
     provider_status_sent: AtomicU64,
-}
-
-impl NodeMetrics {
-    fn inc_connections(&self) {
-        self.ws_connections.fetch_add(1, Ordering::Relaxed);
-    }
-
-    fn dec_connections(&self) {
-        self.ws_connections.fetch_sub(1, Ordering::Relaxed);
-    }
-
-    fn add_tracks_sent(&self, count: u64) {
-        self.tracks_sent.fetch_add(count, Ordering::Relaxed);
-    }
-
-    fn add_provider_status_sent(&self, count: u64) {
-        self.provider_status_sent
-            .fetch_add(count, Ordering::Relaxed);
-    }
-
-    fn render_prometheus(&self) -> String {
-        format!(
-            concat!(
-                "# HELP harpy_ws_connections Number of active websocket connections\n",
-                "# TYPE harpy_ws_connections gauge\n",
-                "harpy_ws_connections {}\n",
-                "# HELP harpy_tracks_sent_total Total streamed track updates\n",
-                "# TYPE harpy_tracks_sent_total counter\n",
-                "harpy_tracks_sent_total {}\n",
-                "# HELP harpy_provider_status_sent_total Total provider status events sent\n",
-                "# TYPE harpy_provider_status_sent_total counter\n",
-                "harpy_provider_status_sent_total {}\n"
-            ),
-            self.ws_connections.load(Ordering::Relaxed),
-            self.tracks_sent.load(Ordering::Relaxed),
-            self.provider_status_sent.load(Ordering::Relaxed),
-        )
-    }
 }
 
 #[derive(Clone, Serialize)]
@@ -171,13 +134,15 @@ async fn main() -> anyhow::Result<()> {
     let port: u16 = std::env::var("NODE_PORT")
         .unwrap_or_else(|_| "8080".to_string())
         .parse()?;
+    let metrics = PrometheusBuilder::new().install_recorder()?;
 
     let (tx, _rx) = broadcast::channel::<NodeEvent>(2048);
     let state = AppState {
         tx,
         subs: Arc::new(DashMap::new()),
         provider_snapshots: Arc::new(DashMap::new()),
-        metrics: Arc::new(NodeMetrics::default()),
+        metrics,
+        debug_counters: Arc::new(DebugCounters::default()),
     };
 
     tokio::spawn(provider_loop_adsb(state.clone()));
@@ -208,7 +173,7 @@ async fn health() -> Json<HealthResponse> {
 async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     (
         [("content-type", "text/plain; version=0.0.4")],
-        state.metrics.render_prometheus(),
+        state.metrics.render(),
     )
 }
 
@@ -231,9 +196,12 @@ async fn debug_snapshot_handler(State(state): State<AppState>) -> impl IntoRespo
                 .count(),
             backpressure_totals: BackpressureTotals {
                 track_batches_dropped: 0,
-                track_batches_sent: state.metrics.tracks_sent.load(Ordering::Relaxed) as usize,
-                high_priority_sent: state.metrics.provider_status_sent.load(Ordering::Relaxed)
+                track_batches_sent: state.debug_counters.tracks_sent.load(Ordering::Relaxed)
                     as usize,
+                high_priority_sent: state
+                    .debug_counters
+                    .provider_status_sent
+                    .load(Ordering::Relaxed) as usize,
             },
         },
         redis: RedisDebugSnapshot {
@@ -250,14 +218,14 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let client_id = format!("client-{}", Uuid::new_v4().simple());
     state.subs.insert(client_id.clone(), ClientSub::default());
-    state.metrics.inc_connections();
+    metrics::increment_gauge!("harpy_ws_connections", 1.0);
 
     if send_subscription_ack(&mut socket, &client_id, true, None)
         .await
         .is_err()
     {
         state.subs.remove(&client_id);
-        state.metrics.dec_connections();
+        metrics::decrement_gauge!("harpy_ws_connections", 1.0);
         return;
     }
 
@@ -296,11 +264,28 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                             .map(|entry| entry.value().clone())
                             .unwrap_or_default();
 
-                        if let Some(envelope) = event_to_envelope(event, &sub) {
+                        if let Some((envelope, track_count, provider_status_count)) = event_to_envelope(event, &sub) {
                             match encode_envelope(&envelope) {
                                 Ok(bytes) => {
                                     if socket.send(Message::Binary(bytes)).await.is_err() {
                                         break;
+                                    }
+                                    if track_count > 0 {
+                                        metrics::counter!("harpy_tracks_sent", track_count);
+                                        state
+                                            .debug_counters
+                                            .tracks_sent
+                                            .fetch_add(track_count, Ordering::Relaxed);
+                                    }
+                                    if provider_status_count > 0 {
+                                        metrics::counter!(
+                                            "harpy_provider_status_sent",
+                                            provider_status_count
+                                        );
+                                        state
+                                            .debug_counters
+                                            .provider_status_sent
+                                            .fetch_add(provider_status_count, Ordering::Relaxed);
                                     }
                                 }
                                 Err(err) => tracing::error!("failed to encode outgoing envelope: {}", err),
@@ -317,7 +302,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 
     state.subs.remove(&client_id);
-    state.metrics.dec_connections();
+    metrics::decrement_gauge!("harpy_ws_connections", 1.0);
 }
 
 fn handle_client_binary_message(
@@ -372,26 +357,35 @@ fn default_layers() -> HashSet<i32> {
     ])
 }
 
-fn event_to_envelope(event: NodeEvent, sub: &ClientSub) -> Option<Envelope> {
+fn event_to_envelope(event: NodeEvent, sub: &ClientSub) -> Option<(Envelope, u64, u64)> {
     match event {
         NodeEvent::TrackBatch(tracks) => {
             let filtered = filter_tracks_for_sub(&tracks, sub);
             if filtered.is_empty() {
                 return None;
             }
-            Some(Envelope {
+            let filtered_len = filtered.len() as u64;
+            Some((
+                Envelope {
+                    schema_version: "1.0.0".to_string(),
+                    server_ts_ms: now_ms(),
+                    payload: Some(Payload::TrackDeltaBatch(TrackDeltaBatch {
+                        deltas: filtered,
+                    })),
+                },
+                filtered_len,
+                0,
+            ))
+        }
+        NodeEvent::ProviderStatus(provider_status) => Some((
+            Envelope {
                 schema_version: "1.0.0".to_string(),
                 server_ts_ms: now_ms(),
-                payload: Some(Payload::TrackDeltaBatch(TrackDeltaBatch {
-                    deltas: filtered,
-                })),
-            })
-        }
-        NodeEvent::ProviderStatus(provider_status) => Some(Envelope {
-            schema_version: "1.0.0".to_string(),
-            server_ts_ms: now_ms(),
-            payload: Some(Payload::ProviderStatus(provider_status)),
-        }),
+                payload: Some(Payload::ProviderStatus(provider_status)),
+            },
+            0,
+            1,
+        )),
     }
 }
 
@@ -531,7 +525,6 @@ async fn poll_provider(
                 last_success_ts_ms = now_ms();
 
                 let _ = state.tx.send(NodeEvent::TrackBatch(Arc::new(deltas)));
-                state.metrics.add_tracks_sent(items as u64);
 
                 let status = ProviderStatus {
                     provider_id: provider_id.clone(),
@@ -548,7 +541,6 @@ async fn poll_provider(
 
                 update_provider_snapshot(&state, &status, true);
                 let _ = state.tx.send(NodeEvent::ProviderStatus(status));
-                state.metrics.add_provider_status_sent(1);
             }
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
@@ -581,7 +573,6 @@ async fn poll_provider(
                 };
                 update_provider_snapshot(&state, &status, false);
                 let _ = state.tx.send(NodeEvent::ProviderStatus(status));
-                state.metrics.add_provider_status_sent(1);
             }
         }
     }

@@ -24,5 +24,7 @@ async-trait.workspace = true
 dashmap.workspace = true
 reqwest.workspace = true
 prost.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 harpy-proto = { path = "../../crates/harpy-proto" }

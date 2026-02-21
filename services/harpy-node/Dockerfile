@@ -1,7 +1,7 @@
-FROM rust:1.75 AS builder
+FROM rust:stable AS builder
 WORKDIR /workspace
 COPY . .
-RUN cargo build -p harpy-node --release
+RUN cargo +stable build -p harpy-node --release
 
 FROM debian:bookworm-slim
 WORKDIR /app

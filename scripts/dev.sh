@@ -8,7 +8,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "Starting harpy-node on :8080"
-cargo run -p harpy-node &
+cargo +stable run -p harpy-node &
 NODE_PID=$!
 
 echo "Starting web app on :3000"

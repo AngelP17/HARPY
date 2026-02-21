@@ -81,7 +81,7 @@ dev-down:
 	$(COMPOSE) down
 
 dev-node:
-	cargo run -p harpy-node
+	cargo +stable run -p harpy-node
 
 dev-web:
 	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws npm --prefix apps/web install && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws npm --prefix apps/web run dev

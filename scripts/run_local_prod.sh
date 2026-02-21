@@ -7,7 +7,7 @@ cleanup() {
 trap cleanup EXIT
 
 echo "[1/4] Build harpy-node (release)"
-cargo build -p harpy-node --release
+cargo +stable build -p harpy-node --release
 
 echo "[2/4] Install frontend dependencies"
 npm --prefix apps/web install

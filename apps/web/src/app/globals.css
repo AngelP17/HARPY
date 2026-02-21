@@ -3,14 +3,27 @@
   --background-elevated: #0b1c31;
   --foreground: #dbe8f8;
 
-  --accent: #5fd8ff;
+  --accent: #5eead4;
   --accent-dim: #43a9d8;
   --accent-warm: #ffc46b;
   --accent-muted: rgba(95, 216, 255, 0.18);
   --warning: #ffd28a;
-  --danger: #ff6b79;
+  --danger: #ff4d4d;
   --info: #6bd6ff;
   --success: #6ef0c7;
+
+  --bg: #070a10;
+  --panel: rgba(18, 22, 34, 0.55);
+  --panel2: rgba(18, 22, 34, 0.35);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --text: rgba(255, 255, 255, 0.92);
+  --muted: rgba(255, 255, 255, 0.65);
+  --warn: #ffcc66;
+  --ok: #58ff9a;
+  --radius: 12px;
+  --gap: 8px;
+  --shadow: 0 18px 50px rgba(0,0,0,0.45);
+  --blur: blur(14px);
 
   --panel-bg: rgba(7, 19, 33, 0.68);
   --panel-border: rgba(96, 165, 255, 0.28);
@@ -294,3 +307,90 @@ a {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(130, 201, 255, 0.58);
 }
+
+/* ========================================
+   Demo Spine — Operator HUD Layout
+   ======================================== */
+
+.app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.scene { position: absolute; inset: 0; }
+
+.hud {
+  position: absolute;
+  pointer-events: none;
+  display: flex;
+  gap: var(--gap, 8px);
+}
+.hud.top { top: 12px; left: 12px; right: 12px; }
+.hud.left { top: 72px; left: 12px; bottom: 72px; width: 340px; }
+.hud.right { top: 72px; right: 12px; bottom: 72px; width: 320px; justify-content: flex-end; }
+.hud.bottom { left: 12px; right: 12px; bottom: 12px; }
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel, rgba(18, 22, 34, 0.55));
+  border: 1px solid var(--stroke, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius, 12px);
+  backdrop-filter: var(--blur, blur(14px));
+  box-shadow: var(--shadow, 0 18px 50px rgba(0,0,0,0.45));
+}
+
+.panelHeader {
+  padding: 12px 12px 10px 12px;
+  border-bottom: 1px solid var(--stroke, rgba(255, 255, 255, 0.08));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panelTitle {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted, rgba(255, 255, 255, 0.65));
+}
+
+.panelBody { padding: 12px; }
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--panel2, rgba(18, 22, 34, 0.35));
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.row.dim { opacity: 0.55; }
+
+.kv { display: flex; flex-direction: column; gap: 2px; }
+.k1 { font-size: 13px; color: var(--text, rgba(255, 255, 255, 0.92)); }
+.k2 { font-size: 12px; color: var(--muted, rgba(255, 255, 255, 0.65)); }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  border: 1px solid var(--stroke, rgba(255, 255, 255, 0.08));
+  background: rgba(0,0,0,0.20);
+  color: var(--muted, rgba(255, 255, 255, 0.65));
+}
+.pill.on { border-color: rgba(94, 234, 212, 0.35); color: var(--accent); }
+.pill.off { color: rgba(255,255,255,0.55); }
+
+.badge { font-size: 11px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--stroke); }
+.badge.ok { color: var(--ok, #58ff9a); }
+.badge.warn { color: var(--warn, #ffcc66); }
+.badge.bad { color: var(--danger); }
+
+.button { pointer-events: auto; cursor: pointer; user-select: none; }

@@ -57,10 +57,7 @@ export function makeMockTick(presetId: PresetId) {
     });
   }
 
-  let tick = 0;
-
   return () => {
-    tick++;
     const now = Date.now();
 
     for (const t of aircraft) {

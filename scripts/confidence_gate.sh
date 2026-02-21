@@ -8,6 +8,7 @@ NODE_LOG="/tmp/harpy-node-confidence.log"
 NODE_HTTP_URL="${CONFIDENCE_GATE_NODE_URL:-http://127.0.0.1:8080}"
 NODE_WS_URL="${CONFIDENCE_GATE_WS_URL:-ws://127.0.0.1:8080/ws}"
 EXTERNAL_NODE="${CONFIDENCE_GATE_EXTERNAL_NODE:-0}"
+HEALTH_TIMEOUT_SECONDS="${CONFIDENCE_GATE_HEALTH_TIMEOUT_SECONDS:-240}"
 
 cleanup() {
   if [[ -n "${NODE_PID:-}" ]]; then
@@ -23,12 +24,12 @@ if [[ "$EXTERNAL_NODE" != "1" ]]; then
 fi
 
 READY=0
-for _ in {1..40}; do
+for _ in $(seq 1 "$HEALTH_TIMEOUT_SECONDS"); do
   if curl -fsS "${NODE_HTTP_URL}/health" >/dev/null 2>&1; then
     READY=1
     break
   fi
-  sleep 0.25
+  sleep 1
 done
 if [[ "$READY" -ne 1 ]]; then
   echo "confidence_gate: node did not become healthy at ${NODE_HTTP_URL}/health"
@@ -53,6 +54,14 @@ try {
 
 const nodeHttpUrl = process.env.CONFIDENCE_GATE_NODE_URL || "http://127.0.0.1:8080";
 const nodeWsUrl = process.env.CONFIDENCE_GATE_WS_URL || "ws://127.0.0.1:8080/ws";
+let WebSocketImpl = globalThis.WebSocket;
+if (!WebSocketImpl) {
+  const wsModule = await import("ws");
+  WebSocketImpl = wsModule.WebSocket ?? wsModule.default;
+}
+if (!WebSocketImpl) {
+  throw new Error("WebSocket implementation is unavailable");
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const toU8 = async (data) => {
@@ -84,8 +93,10 @@ const result = {
 
 result.health = await (await fetch(`${nodeHttpUrl}/health`)).json();
 
-const ws = new WebSocket(nodeWsUrl);
-ws.binaryType = "arraybuffer";
+const ws = new WebSocketImpl(nodeWsUrl);
+if ("binaryType" in ws) {
+  ws.binaryType = "arraybuffer";
+}
 let phase = "boot";
 
 ws.onmessage = async (ev) => {

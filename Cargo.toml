@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "services/harpy-node",
     "services/harpy-relay",
     "services/harpy-ingest",
     "services/harpy-fusion",
@@ -49,8 +50,8 @@ thiserror = "1.0"
 # Logging & observability
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-metrics = "0.21"
-metrics-exporter-prometheus = "0.13"
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
 
 # Security
 jsonwebtoken = "9.2"

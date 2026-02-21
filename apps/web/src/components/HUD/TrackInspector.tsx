@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Crosshair, LocateFixed, X } from "lucide-react";
+import { Crosshair, LocateFixed, Navigation, X } from "lucide-react";
 import { clsx } from "clsx";
 import styles from "./HUD.module.css";
 import { useStore } from "@/store/useStore";
@@ -25,6 +25,8 @@ const TrackInspector: React.FC = () => {
   const selectedTrack = useStore((state) => state.selectedTrack);
   const setSelectedTrack = useStore((state) => state.setSelectedTrack);
   const setFocusTrackId = useStore((state) => state.setFocusTrackId);
+  const cameraFollowTrackId = useStore((state) => state.cameraFollowTrackId);
+  const setCameraFollowTrackId = useStore((state) => state.setCameraFollowTrackId);
 
   return (
     <div className={clsx("hud-panel", styles.trackInspectorPanel)}>
@@ -48,8 +50,22 @@ const TrackInspector: React.FC = () => {
               </button>
               <button
                 type="button"
+                className={styles.trackInspectorAction}
+                onClick={() => setCameraFollowTrackId(
+                  cameraFollowTrackId === selectedTrack.id ? null : selectedTrack.id
+                )}
+                aria-label={cameraFollowTrackId === selectedTrack.id ? "Unfollow track" : "Follow track"}
+              >
+                <Navigation size={10} />
+                <span>{cameraFollowTrackId === selectedTrack.id ? "UNFOLLOW" : "FOLLOW"}</span>
+              </button>
+              <button
+                type="button"
                 className={styles.trackInspectorClose}
-                onClick={() => setSelectedTrack(null)}
+                onClick={() => {
+                  setSelectedTrack(null);
+                  setCameraFollowTrackId(null);
+                }}
                 aria-label="Clear selected track"
               >
                 <X size={10} />

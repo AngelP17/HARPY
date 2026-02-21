@@ -20,6 +20,45 @@
   --hud-font: var(--font-harpy-body), "IBM Plex Sans", "Segoe UI", sans-serif;
   --hud-font-display: var(--font-harpy-display), "Sora", "Avenir Next", sans-serif;
   --hud-font-mono: var(--font-harpy-mono), "JetBrains Mono", "SF Mono", monospace;
+
+  /* --- TYPE SCALE --- */
+  --text-xs: 9px;
+  --text-sm: 10px;
+  --text-base: 11px;
+  --text-md: 13px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* --- SPACING SCALE (4px base) --- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* --- PANEL HIERARCHY --- */
+  --panel-primary-bg: rgba(7, 19, 33, 0.78);
+  --panel-primary-border: rgba(130, 208, 255, 0.52);
+  --panel-secondary-bg: rgba(7, 19, 33, 0.62);
+  --panel-secondary-border: rgba(96, 165, 255, 0.28);
+  --panel-tertiary-bg: rgba(7, 19, 33, 0.45);
+  --panel-tertiary-border: rgba(96, 165, 255, 0.16);
+
+  /* --- TRACK COLORS --- */
+  --track-aircraft: #49d8ff;
+  --track-satellite: #8e7eff;
+  --track-ground: #69f4c9;
+  --track-vessel: #ffb769;
+  --track-unknown: #e0ecff;
+
+  /* --- ANIMATION TOKENS --- */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out-circ: cubic-bezier(0.85, 0, 0.15, 1);
+  --duration-fast: 120ms;
+  --duration-normal: 250ms;
+  --duration-slow: 500ms;
 }
 
 * {
@@ -126,6 +165,32 @@ a {
   pointer-events: none;
 }
 
+/* --- PANEL HIERARCHY CLASSES --- */
+.hud-panel-primary {
+  background: var(--panel-primary-bg);
+  border: 1px solid var(--panel-primary-border);
+  box-shadow: var(--panel-shadow), 0 0 24px rgba(95, 216, 255, 0.08);
+}
+
+.hud-panel-primary::before {
+  background: linear-gradient(90deg, transparent 0%, rgba(95, 216, 255, 0.85) 48%, transparent 100%);
+}
+
+.hud-panel-tertiary {
+  background: var(--panel-tertiary-bg);
+  border: 1px solid var(--panel-tertiary-border);
+  box-shadow: none;
+}
+
+.hud-panel-tertiary::before {
+  opacity: 0.3;
+}
+
+.hud-panel-tertiary:hover {
+  border-color: var(--panel-secondary-border);
+  box-shadow: 0 8px 20px rgba(2, 8, 18, 0.4);
+}
+
 .hud-button {
   background: linear-gradient(180deg, rgba(82, 161, 240, 0.15) 0%, rgba(41, 88, 143, 0.16) 100%);
   border: 1px solid rgba(104, 173, 255, 0.36);
@@ -137,7 +202,7 @@ a {
   font-size: 10px;
   letter-spacing: 0.08em;
   font-weight: 600;
-  transition: all 150ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: all var(--duration-fast) var(--ease-out-expo);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -151,18 +216,65 @@ a {
   border-color: rgba(131, 198, 255, 0.76);
   box-shadow:
     0 4px 16px rgba(8, 31, 61, 0.36),
+    0 0 12px rgba(95, 216, 255, 0.12),
     inset 0 0 0 1px rgba(150, 219, 255, 0.16);
   transform: translateY(-1px);
 }
 
 .hud-button:active {
-  transform: translateY(1px);
+  transform: translateY(1px) scale(0.98);
+  transition-duration: 60ms;
 }
 
 .hud-button:disabled {
   opacity: 0.45;
   cursor: not-allowed;
   transform: none;
+}
+
+/* --- SCANLINE ANIMATION (vision-mode synced) --- */
+@keyframes scanlineDrift {
+  0% { background-position: 0 0; }
+  100% { background-position: 0 200px; }
+}
+
+.hud-overlay[data-vision="CRT"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px, transparent 3px,
+    rgba(0, 0, 0, 0.05) 3px, rgba(0, 0, 0, 0.05) 4px
+  );
+  animation: scanlineDrift 8s linear infinite;
+  opacity: 0.6;
+}
+
+.hud-overlay[data-vision="NVG"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px, transparent 2px,
+    rgba(0, 255, 0, 0.025) 2px, rgba(0, 255, 0, 0.025) 3px
+  );
+  animation: scanlineDrift 12s linear infinite;
+  opacity: 0.5;
+}
+
+.hud-overlay[data-vision="FLIR"]::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: radial-gradient(circle at center, transparent 40%, rgba(0, 0, 0, 0.15) 100%);
 }
 
 ::-webkit-scrollbar {

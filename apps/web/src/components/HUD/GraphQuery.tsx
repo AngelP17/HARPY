@@ -18,6 +18,7 @@ const GraphQuery: React.FC = () => {
   const showGraphQuery = useStore((state) => state.showGraphQuery);
   const setShowGraphQuery = useStore((state) => state.setShowGraphQuery);
   const setFocusTrackId = useStore((state) => state.setFocusTrackId);
+  const setHighlightedTrackIds = useStore((state) => state.setHighlightedTrackIds);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
   const setIsLive = useStore((state) => state.setIsLive);
   const setIsPlaying = useStore((state) => state.setIsPlaying);
@@ -41,20 +42,32 @@ const GraphQuery: React.FC = () => {
 
   if (!showGraphQuery) return null;
 
-  const applyFirstResultToMap = () => {
+  const applyResultsToMap = () => {
     if (!results || results.length === 0) {
       return;
     }
-    const first = results[0];
-    const idCandidate = first.id ?? first.track_id ?? first.node_id;
-    if (typeof idCandidate === "string" && idCandidate.length > 0) {
-      setFocusTrackId(idCandidate);
+    const trackIds = new Set<string>();
+    let firstId: string | null = null;
+    let firstTs: number | null = null;
+    for (const row of results) {
+      const idCandidate = row.id ?? row.track_id ?? row.node_id;
+      if (typeof idCandidate === "string" && idCandidate.length > 0) {
+        trackIds.add(idCandidate);
+        if (!firstId) firstId = idCandidate;
+      }
+      if (firstTs === null) {
+        const tsCandidate = row.ts_ms;
+        if (typeof tsCandidate === "number" && Number.isFinite(tsCandidate) && tsCandidate > 0) {
+          firstTs = tsCandidate;
+        }
+      }
     }
-    const tsCandidate = first.ts_ms;
-    if (typeof tsCandidate === "number" && Number.isFinite(tsCandidate) && tsCandidate > 0) {
+    setHighlightedTrackIds(trackIds);
+    if (firstId) setFocusTrackId(firstId);
+    if (firstTs !== null) {
       setIsLive(false);
       setIsPlaying(false);
-      setCurrentTimeMs(tsCandidate);
+      setCurrentTimeMs(firstTs);
     }
   };
 
@@ -164,7 +177,7 @@ const GraphQuery: React.FC = () => {
             <div className={styles.graphActions}>
               <button
                 className="hud-button"
-                onClick={applyFirstResultToMap}
+                onClick={applyResultsToMap}
                 disabled={!results || results.length === 0}
               >
                 APPLY_TO_MAP

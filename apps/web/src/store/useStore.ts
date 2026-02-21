@@ -153,11 +153,29 @@ interface AppState {
   linksById: Record<string, EvidenceLink>;
   upsertLink: (link: EvidenceLink) => void;
 
+  // Overlay State
+  trailsEnabled: boolean;
+  setTrailsEnabled: (enabled: boolean) => void;
+  headingVectorsEnabled: boolean;
+  setHeadingVectorsEnabled: (enabled: boolean) => void;
+  trailDurationSec: number;
+  setTrailDurationSec: (sec: number) => void;
+
   // Selected Track State
   selectedTrack: SelectedTrack | null;
   setSelectedTrack: (track: SelectedTrack | null) => void;
   focusTrackId: string | null;
   setFocusTrackId: (trackId: string | null) => void;
+  cameraFollowTrackId: string | null;
+  setCameraFollowTrackId: (id: string | null) => void;
+
+  // Highlight State (graph query / alert evidence multi-highlight)
+  highlightedTrackIds: Set<string>;
+  setHighlightedTrackIds: (ids: Set<string>) => void;
+
+  // Stale Provider State
+  staleProviderIds: Set<string>;
+  setStaleProviderIds: (ids: Set<string>) => void;
 
   // Graph Query State
   showGraphQuery: boolean;
@@ -203,12 +221,18 @@ export const useStore = create<AppState>((set) => ({
   setConnectionStatus: (status) => set({ connectionStatus: status }),
   providerStatus: {},
   updateProviderStatus: (status) =>
-    set((state) => ({
-      providerStatus: {
-        ...state.providerStatus,
-        [status.providerId]: status,
-      },
-    })),
+    set((state) => {
+      const nextStale = new Set(state.staleProviderIds);
+      if (status.freshness === "FRESHNESS_CRITICAL" || status.freshness === "FRESHNESS_STALE") {
+        nextStale.add(status.providerId);
+      } else {
+        nextStale.delete(status.providerId);
+      }
+      return {
+        providerStatus: { ...state.providerStatus, [status.providerId]: status },
+        staleProviderIds: nextStale,
+      };
+    }),
   dataPlaneStats: {
     wsRttMs: null,
     throughputTps: E2E_SEED_ENABLED ? 84 : 0,
@@ -304,10 +328,28 @@ export const useStore = create<AppState>((set) => ({
         [link.id]: link,
       },
     })),
+  // Overlay defaults
+  trailsEnabled: DEMO_MODE_ENABLED,
+  setTrailsEnabled: (enabled) => set({ trailsEnabled: enabled }),
+  headingVectorsEnabled: DEMO_MODE_ENABLED,
+  setHeadingVectorsEnabled: (enabled) => set({ headingVectorsEnabled: enabled }),
+  trailDurationSec: DEMO_MODE_ENABLED ? 90 : 120,
+  setTrailDurationSec: (sec) => set({ trailDurationSec: sec }),
+
   selectedTrack: null,
   setSelectedTrack: (track) => set({ selectedTrack: track }),
   focusTrackId: null,
   setFocusTrackId: (trackId) => set({ focusTrackId: trackId }),
+  cameraFollowTrackId: null,
+  setCameraFollowTrackId: (id) => set({ cameraFollowTrackId: id }),
+
+  // Highlight defaults
+  highlightedTrackIds: new Set<string>(),
+  setHighlightedTrackIds: (ids) => set({ highlightedTrackIds: ids }),
+
+  // Stale provider defaults
+  staleProviderIds: new Set<string>(),
+  setStaleProviderIds: (ids) => set({ staleProviderIds: ids }),
 
   // Graph Defaults
   showGraphQuery: false,

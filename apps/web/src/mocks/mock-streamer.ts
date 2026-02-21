@@ -115,6 +115,12 @@ export class MockStreamer {
     this.center = center;
   }
 
+  seekTo(tsMs: number) {
+    const syntheticTick = Math.max(0, Math.floor((tsMs - 1_700_000_000_000) / 500));
+    this.tick = syntheticTick;
+    this.generateBatch();
+  }
+
   private emitEnvelope(envelope: harpy.v1.IEnvelope) {
     const bytes = harpy.v1.Envelope.encode(harpy.v1.Envelope.create(envelope)).finish();
     const frame = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;

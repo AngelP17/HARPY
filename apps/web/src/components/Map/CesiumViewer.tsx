@@ -233,6 +233,8 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const trackPrimitives = useRef<Cesium.PointPrimitiveCollection | null>(null);
   const trackLabels = useRef<Cesium.LabelCollection | null>(null);
   const trackTrail = useRef<Cesium.PolylineCollection | null>(null);
+  const headingVectors = useRef<Cesium.PolylineCollection | null>(null);
+  const selectionReticle = useRef<Cesium.PolylineCollection | null>(null);
   const trackLookup = useRef<Map<string, SelectedTrack>>(new Map());
   const trackHistory = useRef<Map<string, PositionSample[]>>(new Map());
   const visionMode = useStore((state) => state.visionMode);
@@ -332,26 +334,61 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     );
   };
 
-  const renderTrailForTrack = useCallback((trackId: string | null) => {
+  const renderBulkTrails = useCallback(() => {
     const trailCollection = trackTrail.current;
-    if (!trailCollection) {
-      return;
-    }
+    if (!trailCollection) return;
     trailCollection.removeAll();
-    if (!trackId) {
-      return;
+
+    const { trailsEnabled, selectedTrack: selTrack, trailDurationSec } = useStore.getState();
+    const selectedId = selTrack?.id ?? null;
+
+    // Always render selected track trail (bright, wide)
+    if (selectedId) {
+      const samples = trackHistory.current.get(selectedId);
+      if (samples && samples.length >= 2) {
+        trailCollection.add({
+          positions: samples.map((s) => Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt)),
+          width: 3,
+          material: Cesium.Material.fromType("Color", {
+            color: new Cesium.Color(0.49, 0.89, 1.0, 0.95),
+          }),
+        });
+      }
     }
-    const samples = trackHistory.current.get(trackId);
-    if (!samples || samples.length < 2) {
-      return;
+
+    if (!trailsEnabled) return;
+
+    const viewer = viewerInstance.current;
+    if (!viewer) return;
+    const cameraHeight = viewer.camera.positionCartographic.height;
+    if (cameraHeight > 3_000_000) return; // No bulk trails at global zoom
+
+    const maxTrails = cameraHeight > 700_000 ? 500 : 2000;
+    const maxSamplesPerTrail = cameraHeight > 700_000 ? 5 : 15;
+    const now = Date.now();
+    const cutoffMs = now - trailDurationSec * 1000;
+    let trailCount = 0;
+
+    for (const [trackId, samples] of trackHistory.current) {
+      if (trailCount >= maxTrails) break;
+      if (trackId === selectedId) continue;
+      if (samples.length < 2) continue;
+
+      const recentSamples = samples.filter((s) => s.tsMs >= cutoffMs).slice(-maxSamplesPerTrail);
+      if (recentSamples.length < 2) continue;
+
+      const ageFraction = Math.max(0.15,
+        1.0 - (now - recentSamples[recentSamples.length - 1].tsMs) / (trailDurationSec * 1000));
+
+      trailCollection.add({
+        positions: recentSamples.map((s) => Cesium.Cartesian3.fromDegrees(s.lon, s.lat, s.alt)),
+        width: 1.5,
+        material: Cesium.Material.fromType("Color", {
+          color: new Cesium.Color(0.4, 0.75, 0.9, ageFraction * 0.45),
+        }),
+      });
+      trailCount++;
     }
-    trailCollection.add({
-      positions: samples.map((sample) => Cesium.Cartesian3.fromDegrees(sample.lon, sample.lat, sample.alt)),
-      width: 2,
-      material: Cesium.Material.fromType("Color", {
-        color: new Cesium.Color(0.49, 0.89, 1.0, 0.85),
-      }),
-    });
   }, []);
 
   const updatePrimitives = useCallback((payload: RenderPayloadMessage) => {
@@ -380,7 +417,20 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     points.removeAll();
     labelsCollection.removeAll();
+    headingVectors.current?.removeAll();
     const now = Date.now();
+
+    // Read store state once for the entire batch
+    const storeState = useStore.getState();
+    const staleProviders = storeState.staleProviderIds;
+    const highlightedIds = storeState.highlightedTrackIds;
+    const showHeadingVectors = storeState.headingVectorsEnabled;
+    const trailDurationSec = storeState.trailDurationSec;
+    const maxHistorySamples = Math.min(60, Math.ceil(trailDurationSec / 4));
+
+    // LOD: determine camera height for heading vector gating
+    const cameraHeight = viewerInstance.current?.camera.positionCartographic.height ?? 20_000_000;
+    const renderHeadingVectors = showHeadingVectors && cameraHeight < 1_500_000;
 
     for (let i = 0; i < count; i += 1) {
       const lat = posArray[i * 3];
@@ -410,13 +460,37 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         kindCounts.UNKNOWN += clusterCount;
       }
 
-      const pixelSize = isCluster ? Math.min(30, 10 + Math.log2(clusterCount + 1) * 4) : 8;
-      const outlineWidth = isCluster ? 3 : 1;
+      // Stale + highlight visual modifiers
+      const isStale = !isCluster && staleProviders.has(providerId);
+      const isHighlighted = !isCluster && highlightedIds.has(id);
+
+      let pixelSize = isCluster ? Math.min(30, 10 + Math.log2(clusterCount + 1) * 4) : 8;
+      if (isHighlighted) pixelSize = 14;
+
+      const baseColor = Cesium.Color.fromRgba(colorArray[i]);
+      const displayColor = isStale ? baseColor.withAlpha(0.35) : baseColor;
+
+      let outlineColor: Cesium.Color;
+      let outlineWidth: number;
+      if (isHighlighted) {
+        outlineColor = new Cesium.Color(1.0, 0.85, 0.3, 0.95);
+        outlineWidth = 4;
+      } else if (isStale) {
+        outlineColor = new Cesium.Color(1.0, 0.7, 0.4, 0.6);
+        outlineWidth = 2;
+      } else if (isCluster) {
+        outlineColor = Cesium.Color.WHITE.withAlpha(0.9);
+        outlineWidth = 3;
+      } else {
+        outlineColor = Cesium.Color.BLACK.withAlpha(0.5);
+        outlineWidth = 1;
+      }
+
       const primitive = points.add({
         position: pointPosition,
         pixelSize,
-        color: Cesium.Color.fromRgba(colorArray[i]),
-        outlineColor: isCluster ? Cesium.Color.WHITE.withAlpha(0.9) : Cesium.Color.BLACK.withAlpha(0.5),
+        color: displayColor,
+        outlineColor,
         outlineWidth,
         scaleByDistance: new Cesium.NearFarScalar(1.5e2, 2.2, 1.5e7, 0.35),
       });
@@ -451,16 +525,35 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
           tsMs: now,
         });
 
+        // Expanded track history for bulk trails
         const existingHistory = trackHistory.current.get(id) ?? [];
         const previousSample = existingHistory[existingHistory.length - 1];
         const shouldAppend =
           !previousSample
-          || Math.abs(previousSample.lat - lat) > 0.0003
-          || Math.abs(previousSample.lon - lon) > 0.0003
-          || Math.abs(previousSample.alt - alt) > 20;
+          || Math.abs(previousSample.lat - lat) > 0.0001
+          || Math.abs(previousSample.lon - lon) > 0.0001
+          || (now - (previousSample.tsMs || 0)) > 4000;
         if (shouldAppend) {
-          const nextHistory = [...existingHistory, { lat, lon, alt, tsMs: now }].slice(-8);
+          const nextHistory = [...existingHistory, { lat, lon, alt, tsMs: now }].slice(-maxHistorySamples);
           trackHistory.current.set(id, nextHistory);
+        }
+
+        // Heading vector: short polyline from track position in heading direction
+        if (renderHeadingVectors && speed > 2) {
+          const headingRad = (heading * Math.PI) / 180;
+          const vectorLengthDeg = 0.015 + (speed / 300) * 0.035;
+          const endLat = lat + Math.cos(headingRad) * vectorLengthDeg;
+          const endLon = lon + Math.sin(headingRad) * vectorLengthDeg;
+          headingVectors.current?.add({
+            positions: [
+              pointPosition,
+              Cesium.Cartesian3.fromDegrees(endLon, endLat, alt),
+            ],
+            width: 1.5,
+            material: Cesium.Material.fromType("Color", {
+              color: displayColor.withAlpha(0.6),
+            }),
+          });
         }
       }
     }
@@ -476,11 +569,9 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     const selected = useStore.getState().selectedTrack;
     if (selected && !nextTrackLookup.has(selected.id)) {
       setSelectedTrack(null);
-      renderTrailForTrack(null);
-    } else {
-      renderTrailForTrack(selected?.id ?? null);
     }
-  }, [renderTrailForTrack, setRenderedTrackStats, setSelectedTrack]);
+    renderBulkTrails();
+  }, [renderBulkTrails, setRenderedTrackStats, setSelectedTrack]);
 
   useEffect(() => {
     if (!viewerRef.current || viewerInstance.current) return;
@@ -579,6 +670,8 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     trackPrimitives.current = scene.primitives.add(new Cesium.PointPrimitiveCollection());
     trackLabels.current = scene.primitives.add(new Cesium.LabelCollection());
     trackTrail.current = scene.primitives.add(new Cesium.PolylineCollection());
+    headingVectors.current = scene.primitives.add(new Cesium.PolylineCollection());
+    selectionReticle.current = scene.primitives.add(new Cesium.PolylineCollection());
     const pickHandler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
     pickHandler.setInputAction((click: { position: Cesium.Cartesian2 }) => {
       const picked = viewer.scene.pick(click.position) as
@@ -594,13 +687,12 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
       if (!pickedId) {
         setSelectedTrack(null);
-        renderTrailForTrack(null);
+        useStore.getState().setCameraFollowTrackId(null);
         return;
       }
 
       const selected = trackLookup.current.get(pickedId) ?? null;
       setSelectedTrack(selected);
-      renderTrailForTrack(selected?.id ?? null);
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
     // Initialize Workers
@@ -668,11 +760,10 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
     let lastLodPush = 0;
     let lastCameraPosePush = 0;
+    let lastTrailRefresh = 0;
     const postRenderListener = () => {
       const now = performance.now();
-      if (now - lastLodPush < 350) {
-        // continue to camera pose update
-      } else {
+      if (now - lastLodPush >= 350) {
         lastLodPush = now;
         const height = viewer.camera.positionCartographic.height;
         clusterWorker.current?.postMessage({ type: "SET_CAMERA_LOD", cameraHeightM: height });
@@ -688,6 +779,60 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
           pitch: viewer.camera.pitch,
           roll: viewer.camera.roll,
         });
+      }
+
+      // Selection reticle: pulsing ring around selected track
+      const reticle = selectionReticle.current;
+      if (reticle) {
+        reticle.removeAll();
+        const sel = useStore.getState().selectedTrack;
+        if (sel) {
+          const t = now / 1000;
+          const pulseAlpha = 0.5 + 0.3 * Math.sin(t * 3.0);
+          const pulseRadius = 0.006 + 0.002 * Math.sin(t * 2.5);
+          const positions: Cesium.Cartesian3[] = [];
+          const segments = 24;
+          for (let j = 0; j <= segments; j++) {
+            const angle = (j / segments) * 2 * Math.PI;
+            positions.push(Cesium.Cartesian3.fromDegrees(
+              sel.lon + Math.cos(angle) * pulseRadius,
+              sel.lat + Math.sin(angle) * pulseRadius,
+              sel.alt,
+            ));
+          }
+          reticle.add({
+            positions,
+            width: 2.5,
+            material: Cesium.Material.fromType("Color", {
+              color: new Cesium.Color(0.37, 0.85, 1.0, pulseAlpha),
+            }),
+          });
+        }
+      }
+
+      // Camera follow mode
+      const followId = useStore.getState().cameraFollowTrackId;
+      if (followId) {
+        const followTrack = trackLookup.current.get(followId);
+        if (followTrack) {
+          const currentHeight = viewer.camera.positionCartographic.height;
+          viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(
+              followTrack.lon, followTrack.lat, Math.max(currentHeight, 25000)),
+            orientation: {
+              heading: viewer.camera.heading,
+              pitch: viewer.camera.pitch,
+              roll: 0,
+            },
+          });
+        }
+      }
+
+      // Throttled bulk trail refresh (1Hz)
+      if (now - lastTrailRefresh >= 1000) {
+        lastTrailRefresh = now;
+        // Trails are rebuilt in updatePrimitives on data tick,
+        // but also refresh periodically for camera LOD changes
       }
     };
     scene.postRender.addEventListener(postRenderListener);
@@ -874,7 +1019,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     setRenderedTrackStats,
     setThroughputStats,
     setWsRttMs,
-    renderTrailForTrack,
+    renderBulkTrails,
     updatePrimitives,
     upsertLink,
     setSelectedTrack,
@@ -931,8 +1076,15 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   }, [visionMode]);
 
   useEffect(() => {
-    renderTrailForTrack(selectedTrack?.id ?? null);
-  }, [renderTrailForTrack, selectedTrack]);
+    renderBulkTrails();
+  }, [renderBulkTrails, selectedTrack]);
+
+  // Clear track history when switching to playback mode
+  useEffect(() => {
+    if (!isLive) {
+      trackHistory.current.clear();
+    }
+  }, [isLive]);
 
   useEffect(() => {
     if (!focusTrackId || !viewerInstance.current) {
@@ -967,6 +1119,16 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     });
     setRequestedCameraPose(null);
   }, [requestedCameraPose, setRequestedCameraPose]);
+
+  // Demo mode auto-init: fly to appealing angle on first render
+  useEffect(() => {
+    if (!demoMode || !viewerInstance.current) return;
+    viewerInstance.current.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(-122.4, 37.78, 250_000),
+      orientation: { heading: 0.3, pitch: -0.8, roll: 0 },
+      duration: 0,
+    });
+  }, [demoMode]);
 
   return <div ref={viewerRef} className="cesium-viewer" />;
 };

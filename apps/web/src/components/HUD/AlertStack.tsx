@@ -12,6 +12,7 @@ const AlertStack: React.FC = () => {
   const setSelectedAlertId = useStore((state) => state.setSelectedAlertId);
   const linksById = useStore((state) => state.linksById);
   const setFocusTrackId = useStore((state) => state.setFocusTrackId);
+  const setHighlightedTrackIds = useStore((state) => state.setHighlightedTrackIds);
   const setIsLive = useStore((state) => state.setIsLive);
   const setIsPlaying = useStore((state) => state.setIsPlaying);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
@@ -51,22 +52,24 @@ const AlertStack: React.FC = () => {
                 setIsLive(false);
                 setIsPlaying(false);
                 setCurrentTimeMs(alert.tsMs);
+                const trackIds = new Set<string>();
+                let firstTrackId: string | null = null;
                 for (const evidenceId of alert.evidenceLinkIds) {
                   const link = linksById[evidenceId];
-                  if (!link) {
-                    continue;
+                  if (!link) continue;
+                  if (link.fromType === "NODE_TYPE_TRACK") {
+                    trackIds.add(link.fromId);
+                    if (!firstTrackId) firstTrackId = link.fromId;
                   }
-                  const candidate =
-                    link.fromType === "NODE_TYPE_TRACK"
-                      ? link.fromId
-                      : link.toType === "NODE_TYPE_TRACK"
-                        ? link.toId
-                        : null;
-                  if (candidate) {
-                    setFocusTrackId(candidate);
-                    break;
+                  if (link.toType === "NODE_TYPE_TRACK") {
+                    trackIds.add(link.toId);
+                    if (!firstTrackId) firstTrackId = link.toId;
                   }
                 }
+                setHighlightedTrackIds(trackIds);
+                if (firstTrackId) setFocusTrackId(firstTrackId);
+              } else {
+                setHighlightedTrackIds(new Set<string>());
               }
             }}
           >

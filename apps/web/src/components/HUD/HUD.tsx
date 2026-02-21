@@ -10,6 +10,7 @@ import {
   Eye,
   Layers,
   Radio,
+  Route,
   Save,
   Shield,
   SlidersHorizontal,
@@ -149,6 +150,10 @@ const HUD: React.FC = () => {
   const setPlaybackRate = useStore((state) => state.setPlaybackRate);
   const currentTimeMs = useStore((state) => state.currentTimeMs);
   const setCurrentTimeMs = useStore((state) => state.setCurrentTimeMs);
+  const trailsEnabled = useStore((state) => state.trailsEnabled);
+  const setTrailsEnabled = useStore((state) => state.setTrailsEnabled);
+  const headingVectorsEnabled = useStore((state) => state.headingVectorsEnabled);
+  const setHeadingVectorsEnabled = useStore((state) => state.setHeadingVectorsEnabled);
 
   const lastMessageDisplay =
     dataPlaneStats.lastMessageTsMs === null ? "--" : new Date(dataPlaneStats.lastMessageTsMs).toISOString().substring(11, 19);
@@ -254,8 +259,8 @@ const HUD: React.FC = () => {
   );
 
   return (
-    <div className="hud-overlay">
-      <div className={clsx("hud-panel", styles.topBar)}>
+    <div className="hud-overlay" data-vision={visionMode}>
+      <div className={clsx("hud-panel hud-panel-primary", styles.topBar)}>
         <div className={styles.logoWrap}>
           <div className={styles.logoTextBlock}>
             <span className={styles.logoKicker}>Geospatial Intelligence Fusion</span>
@@ -278,6 +283,10 @@ const HUD: React.FC = () => {
         </div>
 
         <div className={styles.topStats}>
+          <div className={clsx(styles.statusChip, isLive ? styles.liveChip : styles.playbackChip)}>
+            <span className={isLive ? styles.liveDot : styles.playbackDot} />
+            <span>{isLive ? "LIVE" : "PLAYBACK"}</span>
+          </div>
           <div className={styles.statusChip}>
             <Activity
               size={12}
@@ -369,6 +378,31 @@ const HUD: React.FC = () => {
 
           <div className={styles.panelSection}>
             <div className={styles.panelHeader}>
+              <Route size={14} />
+              <span>Overlays</span>
+            </div>
+            <div className={styles.layerList}>
+              <button
+                className={clsx("hud-button", styles.layerButton, {
+                  [styles.activeLayer]: trailsEnabled,
+                })}
+                onClick={() => setTrailsEnabled(!trailsEnabled)}
+              >
+                <span>Trails</span>
+              </button>
+              <button
+                className={clsx("hud-button", styles.layerButton, {
+                  [styles.activeLayer]: headingVectorsEnabled,
+                })}
+                onClick={() => setHeadingVectorsEnabled(!headingVectorsEnabled)}
+              >
+                <span>Heading Vectors</span>
+              </button>
+            </div>
+          </div>
+
+          <div className={styles.panelSection}>
+            <div className={styles.panelHeader}>
               <Database size={14} />
               <span>Tools</span>
             </div>
@@ -400,6 +434,33 @@ const HUD: React.FC = () => {
                 <Save size={12} />
                 SAVE VIEW
               </button>
+            </div>
+            <div className={styles.filterLabel}>Camera Presets</div>
+            <div className={styles.pillRow}>
+              {[
+                { label: "DC", lat: 38.9072, lon: -77.0369, alt: 250_000 },
+                { label: "NYC", lat: 40.7128, lon: -74.006, alt: 250_000 },
+                { label: "LON", lat: 51.5074, lon: -0.1278, alt: 250_000 },
+                { label: "TYO", lat: 35.6762, lon: 139.6503, alt: 250_000 },
+                { label: "GLB", lat: 20, lon: 0, alt: 18_000_000 },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  className={clsx("hud-button", styles.pillButton)}
+                  onClick={() =>
+                    setRequestedCameraPose({
+                      lat: preset.lat,
+                      lon: preset.lon,
+                      alt: preset.alt,
+                      heading: 0,
+                      pitch: -Math.PI / 2,
+                      roll: 0,
+                    })
+                  }
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
           </div>
 
@@ -456,7 +517,7 @@ const HUD: React.FC = () => {
         </div>
 
         <div className={styles.rightPanelStack}>
-          <div className={clsx("hud-panel", styles.dataLinkPanel)}>
+          <div className={clsx("hud-panel hud-panel-tertiary", styles.dataLinkPanel)}>
             <div className={styles.panelHeader}>
               <Radio size={14} />
               <span>Data Plane</span>

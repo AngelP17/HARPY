@@ -14,6 +14,11 @@ interface MockTrackSeed {
   kind: harpy.v1.TrackKind;
 }
 
+interface StreamCenter {
+  lat: number;
+  lon: number;
+}
+
 const AIRCRAFT_COUNT = 6000;
 const SATELLITE_COUNT = 180;
 const CAMERA_COUNT = 50;
@@ -88,6 +93,8 @@ export class MockStreamer {
   private onMessage: (data: ArrayBuffer) => void;
   private tick = 0;
   private readonly trackSeeds: MockTrackSeed[] = buildTrackSeeds();
+  private readonly demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+  private center: StreamCenter = { lat: 37.7749, lon: -122.4194 };
 
   constructor(onMessage: (data: ArrayBuffer) => void) {
     this.onMessage = onMessage;
@@ -104,6 +111,10 @@ export class MockStreamer {
     if (this.intervalId) clearInterval(this.intervalId);
   }
 
+  setCenter(center: StreamCenter) {
+    this.center = center;
+  }
+
   private emitEnvelope(envelope: harpy.v1.IEnvelope) {
     const bytes = harpy.v1.Envelope.encode(harpy.v1.Envelope.create(envelope)).finish();
     const frame = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
@@ -115,8 +126,13 @@ export class MockStreamer {
     const t = this.tick;
     const deltas: harpy.v1.ITrackDelta[] = this.trackSeeds.map((seed, index) => {
       const angular = t * 0.09 + seed.phase;
-      const lat = clampLatitude(seed.baseLat + Math.sin(angular) * seed.latAmp);
-      const lon = wrapLongitude(seed.baseLon + Math.cos(angular * 0.82) * seed.lonAmp);
+      const offsetLat = this.demoMode ? this.center.lat : seed.baseLat;
+      const offsetLon = this.demoMode ? this.center.lon : seed.baseLon;
+      const latSpreadScale = this.demoMode ? (seed.kind === harpy.v1.TrackKind.TRACK_KIND_SATELLITE ? 6 : 1.8) : 1;
+      const lonSpreadScale = this.demoMode ? (seed.kind === harpy.v1.TrackKind.TRACK_KIND_SATELLITE ? 9 : 2.4) : 1;
+
+      const lat = clampLatitude(offsetLat + Math.sin(angular) * seed.latAmp * latSpreadScale);
+      const lon = wrapLongitude(offsetLon + Math.cos(angular * 0.82) * seed.lonAmp * lonSpreadScale);
       const alt = Math.max(0, seed.baseAlt + Math.sin(angular * 1.41) * seed.altAmp);
       const heading = (seed.headingOffset + t * 4 + index) % 360;
       const speed = Math.max(0, seed.speed + Math.cos(angular * 1.17) * 18);

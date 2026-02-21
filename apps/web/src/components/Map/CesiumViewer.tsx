@@ -227,6 +227,13 @@ const mapSpeedBandToRange = (band: SpeedBand): { minSpeedMs: number; maxSpeedMs:
   return { minSpeedMs: 0, maxSpeedMs: 30_000 };
 };
 
+const worldViewport = (): harpy.v1.IBoundingBox => ({
+  minLat: -90,
+  minLon: -180,
+  maxLat: 90,
+  maxLon: 180,
+});
+
 const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewerInstance = useRef<Cesium.Viewer | null>(null);
@@ -301,6 +308,27 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
 
   const sendSubscription = (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
     const mappedLayers = mapUiLayersToProto(activeLayers);
+    const viewer = viewerInstance.current;
+    const viewport = (() => {
+      if (!viewer) {
+        return worldViewport();
+      }
+      try {
+        const rect = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
+        if (!rect) {
+          return worldViewport();
+        }
+        return {
+          minLat: Cesium.Math.toDegrees(rect.south),
+          minLon: Cesium.Math.toDegrees(rect.west),
+          maxLat: Cesium.Math.toDegrees(rect.north),
+          maxLon: Cesium.Math.toDegrees(rect.east),
+        };
+      } catch {
+        return worldViewport();
+      }
+    })();
+
     const timeRange = liveMode
       ? harpy.v1.TimeRange.create({ live: {} })
       : harpy.v1.TimeRange.create({
@@ -316,7 +344,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         ? harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_LIVE
         : harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_PLAYBACK,
       timeRange,
-      viewport: { minLat: -90, minLon: -180, maxLat: 90, maxLon: 180 },
+      viewport,
     });
     const envelope = harpy.v1.Envelope.create({
       schemaVersion: "1.0.0",
@@ -931,8 +959,20 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         lon: Cesium.Math.toDegrees(cartographic.longitude),
       });
     };
+    const cameraMoveEndListener = () => {
+      if (!useWebSocket) {
+        return;
+      }
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        sendSubscription(socket, layersRef.current, isLiveRef.current, currentTimeRef.current);
+      }
+    };
     if (demoMode && streamer) {
       viewer.camera.changed.addEventListener(cameraCenterListener);
+    }
+    if (useWebSocket) {
+      viewer.camera.moveEnd.addEventListener(cameraMoveEndListener);
     }
 
     let debugPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -997,6 +1037,9 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       scene.postRender.removeEventListener(postRenderListener);
       if (demoMode && streamer) {
         viewer.camera.changed.removeEventListener(cameraCenterListener);
+      }
+      if (useWebSocket) {
+        viewer.camera.moveEnd.removeEventListener(cameraMoveEndListener);
       }
       if (viewerInstance.current) {
         viewerInstance.current.destroy();

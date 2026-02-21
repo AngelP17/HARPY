@@ -306,7 +306,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     isLivePlaybackAllowedRef.current = isLive || isPlaying;
   }, [isLive, isPlaying]);
 
-  const computeViewport = (): harpy.v1.IBoundingBox => {
+  const computeViewport = useCallback((): harpy.v1.IBoundingBox => {
     const viewer = viewerInstance.current;
     if (!viewer) {
       return worldViewport();
@@ -325,42 +325,45 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     } catch {
       return worldViewport();
     }
-  };
+  }, []);
 
-  const sendSubscription = (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
-    const mappedLayers = mapUiLayersToProto(activeLayers);
-    const timeRange = liveMode
-      ? harpy.v1.TimeRange.create({ live: {} })
-      : harpy.v1.TimeRange.create({
-          playback: {
-            startTsMs: Math.max(0, endTsMs - 60 * 60 * 1000),
-            endTsMs,
-          },
-        });
+  const sendSubscription = useCallback(
+    (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
+      const mappedLayers = mapUiLayersToProto(activeLayers);
+      const timeRange = liveMode
+        ? harpy.v1.TimeRange.create({ live: {} })
+        : harpy.v1.TimeRange.create({
+            playback: {
+              startTsMs: Math.max(0, endTsMs - 60 * 60 * 1000),
+              endTsMs,
+            },
+          });
 
-    const request = harpy.v1.SubscriptionRequest.create({
-      layers: mappedLayers,
-      mode: liveMode
-        ? harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_LIVE
-        : harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_PLAYBACK,
-      timeRange,
-      viewport: computeViewport(),
-    });
-    const envelope = harpy.v1.Envelope.create({
-      schemaVersion: "1.0.0",
-      serverTsMs: Date.now(),
-      subscriptionRequest: request
-    });
-    const buffer = harpy.v1.Envelope.encode(envelope).finish();
-    lastSubscriptionSentAtRef.current = Date.now();
-    socket.send(buffer);
-    console.log(
-      "[WS] Sent SubscriptionRequest:",
-      liveMode ? "LIVE" : "PLAYBACK",
-      "layers=",
-      mappedLayers,
-    );
-  };
+      const request = harpy.v1.SubscriptionRequest.create({
+        layers: mappedLayers,
+        mode: liveMode
+          ? harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_LIVE
+          : harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_PLAYBACK,
+        timeRange,
+        viewport: computeViewport(),
+      });
+      const envelope = harpy.v1.Envelope.create({
+        schemaVersion: "1.0.0",
+        serverTsMs: Date.now(),
+        subscriptionRequest: request
+      });
+      const buffer = harpy.v1.Envelope.encode(envelope).finish();
+      lastSubscriptionSentAtRef.current = Date.now();
+      socket.send(buffer);
+      console.log(
+        "[WS] Sent SubscriptionRequest:",
+        liveMode ? "LIVE" : "PLAYBACK",
+        "layers=",
+        mappedLayers,
+      );
+    },
+    [computeViewport],
+  );
 
   const renderBulkTrails = useCallback(() => {
     const trailCollection = trackTrail.current;
@@ -1066,6 +1069,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     updateProviderStatus,
     demoMode,
     useMockStreamer,
+    sendSubscription,
     useWebSocket,
   ]);
 
@@ -1081,7 +1085,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       sendSubscription(socketRef.current, layers, isLive, currentTimeRef.current);
     }
-  }, [isLive, layers, useWebSocket]);
+  }, [isLive, layers, sendSubscription, useWebSocket]);
 
   useEffect(() => {
     const altitudeRange = mapAltitudeBandToRange(altitudeBand);
@@ -1108,7 +1112,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     if (socketRef.current?.readyState === WebSocket.OPEN) {
       sendSubscription(socketRef.current, layers, false, currentTimeMs);
     }
-  }, [currentTimeMs, isLive, isPlaying, layers, useWebSocket]);
+  }, [currentTimeMs, isLive, isPlaying, layers, sendSubscription, useWebSocket]);
 
   useEffect(() => {
     if (!viewerInstance.current) return;

@@ -19,6 +19,7 @@ use harpy_proto::harpy::v1::{
     envelope::Payload, BoundingBox, CircuitState, Envelope, Freshness, LayerType, ProviderStatus,
     SubscriptionAck, SubscriptionMode, TrackDelta, TrackDeltaBatch, TrackKind,
 };
+use metrics::{counter, gauge};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use prost::Message as ProstMessage;
 use serde::Serialize;
@@ -218,14 +219,14 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let client_id = format!("client-{}", Uuid::new_v4().simple());
     state.subs.insert(client_id.clone(), ClientSub::default());
-    metrics::increment_gauge!("harpy_ws_connections", 1.0);
+    gauge!("harpy_ws_connections").increment(1.0);
 
     if send_subscription_ack(&mut socket, &client_id, true, None)
         .await
         .is_err()
     {
         state.subs.remove(&client_id);
-        metrics::decrement_gauge!("harpy_ws_connections", 1.0);
+        gauge!("harpy_ws_connections").decrement(1.0);
         return;
     }
 
@@ -271,17 +272,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
                                         break;
                                     }
                                     if track_count > 0 {
-                                        metrics::counter!("harpy_tracks_sent", track_count);
+                                        counter!("harpy_tracks_sent").increment(track_count);
                                         state
                                             .debug_counters
                                             .tracks_sent
                                             .fetch_add(track_count, Ordering::Relaxed);
                                     }
                                     if provider_status_count > 0 {
-                                        metrics::counter!(
-                                            "harpy_provider_status_sent",
-                                            provider_status_count
-                                        );
+                                        counter!("harpy_provider_status_sent")
+                                            .increment(provider_status_count);
                                         state
                                             .debug_counters
                                             .provider_status_sent
@@ -302,7 +301,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 
     state.subs.remove(&client_id);
-    metrics::decrement_gauge!("harpy_ws_connections", 1.0);
+    gauge!("harpy_ws_connections").decrement(1.0);
 }
 
 fn handle_client_binary_message(
@@ -644,4 +643,65 @@ fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use harpy_proto::harpy::v1::Position;
+
+    fn make_track(lat: f64, lon: f64, kind: i32) -> TrackDelta {
+        TrackDelta {
+            id: "t-1".to_string(),
+            kind,
+            position: Some(Position { lat, lon, alt: 0.0 }),
+            heading: 0.0,
+            speed: 0.0,
+            ts_ms: 0,
+            provider_id: "test".to_string(),
+            meta: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn track_in_viewport_regular_bbox() {
+        let viewport = BoundingBox {
+            min_lat: 35.0,
+            min_lon: -125.0,
+            max_lat: 40.0,
+            max_lon: -120.0,
+        };
+        let inside = make_track(37.77, -122.41, TrackKind::Aircraft as i32);
+        let outside = make_track(50.0, -122.41, TrackKind::Aircraft as i32);
+        assert!(track_in_viewport(&inside, &viewport));
+        assert!(!track_in_viewport(&outside, &viewport));
+    }
+
+    #[test]
+    fn track_in_viewport_handles_dateline_wrap() {
+        let viewport = BoundingBox {
+            min_lat: -10.0,
+            min_lon: 170.0,
+            max_lat: 10.0,
+            max_lon: -170.0,
+        };
+        let inside_east = make_track(0.0, 175.0, TrackKind::Aircraft as i32);
+        let inside_west = make_track(0.0, -175.0, TrackKind::Aircraft as i32);
+        let outside_mid = make_track(0.0, 0.0, TrackKind::Aircraft as i32);
+        assert!(track_in_viewport(&inside_east, &viewport));
+        assert!(track_in_viewport(&inside_west, &viewport));
+        assert!(!track_in_viewport(&outside_mid, &viewport));
+    }
+
+    #[test]
+    fn layer_allowed_maps_track_kinds_to_layer_types() {
+        let layers = HashSet::from([
+            LayerType::Aircraft as i32,
+            LayerType::Detection as i32,
+            LayerType::Camera as i32,
+        ]);
+        assert!(layer_allowed(TrackKind::Aircraft as i32, &layers));
+        assert!(layer_allowed(TrackKind::Ground as i32, &layers));
+        assert!(!layer_allowed(TrackKind::Satellite as i32, &layers));
+    }
 }

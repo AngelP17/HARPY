@@ -176,6 +176,9 @@ jobs:
         run: |
           curl -fsS -X POST http://localhost:8084/aip/query \
             -H 'content-type: application/json' \
+            -H 'x-harpy-role: OPERATOR' \
+            -H 'x-harpy-scopes: aip:query,aip:execute,graph:query' \
+            -H 'x-harpy-actor-id: ci-smoke' \
             -d '{"tool":"set_layers","args":{"layers":["AIRCRAFT","SATELLITE"]},"apply":true,"confirm":true,"actor_id":"ci-smoke"}'
 
       - name: Verify Graph export contract

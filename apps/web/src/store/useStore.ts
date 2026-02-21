@@ -9,6 +9,8 @@ export interface ProviderHealth {
   circuitState: string;
   freshness: string;
   latencyMs: number;
+  lastSuccessTsMs?: number;
+  failureCount?: number;
 }
 
 export interface DataPlaneStats {

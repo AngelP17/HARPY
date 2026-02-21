@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health lint test build perf-check proto verify clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local docker-local-up docker-local-down lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -43,6 +43,24 @@ dev-demo: dev-up-offline
 	@echo "Starting HARPY web in DEMO_MODE (dense clustered stream around current camera)..."
 	@echo "Open http://localhost:3000 once Next.js is ready."
 	@cd apps/web && npm run dev:demo
+
+dev-node:
+	cargo +1.83.0 run -p harpy-node
+
+dev-web:
+	cd apps/web && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm install && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm run dev
+
+dev:
+	./scripts/dev.sh
+
+prod-local:
+	./scripts/run_local_prod.sh
+
+docker-local-up:
+	docker compose -f docker-compose.local.yml up --build
+
+docker-local-down:
+	docker compose -f docker-compose.local.yml down
 
 dev-status:
 	$(COMPOSE) ps

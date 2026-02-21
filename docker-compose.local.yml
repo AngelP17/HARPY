@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  node:
+    build:
+      context: .
+      dockerfile: services/harpy-node/Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      NODE_PORT: "8080"
+      ENABLE_REAL_ADSB: "false"
+      ENABLE_REAL_TLE: "false"
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_WS_URL: "ws://localhost:8080/ws"
+        NEXT_PUBLIC_RELAY_HTTP_URL: "http://node:8080"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - node

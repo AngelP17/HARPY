@@ -51,11 +51,48 @@ interface SavedScene {
 
 const SAVED_SCENES_KEY = "harpy.saved-scenes.v1";
 
-const LAYER_OPTIONS: Array<{ id: string; label: string; short: string; kindKey?: string }> = [
-  { id: "ADSB", label: "ADS-B Aircraft", short: "AIR", kindKey: "AIRCRAFT" },
-  { id: "TLE_SAT", label: "TLE Satellites", short: "SAT", kindKey: "SATELLITE" },
-  { id: "SENS_CV", label: "Sensors / CV", short: "SEN", kindKey: "GROUND" },
-  { id: "WX_RADAR", label: "Weather / Ground", short: "WX", kindKey: "GROUND" },
+interface LayerOption {
+  id: string;
+  label: string;
+  short: string;
+  kindKey?: string;
+  sourceLabel: string;
+  providerIds: string[];
+}
+
+const LAYER_OPTIONS: LayerOption[] = [
+  {
+    id: "ADSB",
+    label: "ADS-B Aircraft",
+    short: "AIR",
+    kindKey: "AIRCRAFT",
+    sourceLabel: "OpenSky",
+    providerIds: ["mock-adsb", "opensky", "mock-streamer"],
+  },
+  {
+    id: "TLE_SAT",
+    label: "TLE Satellites",
+    short: "SAT",
+    kindKey: "SATELLITE",
+    sourceLabel: "CelesTrak",
+    providerIds: ["mock-tle", "celestrak-gp", "mock-streamer"],
+  },
+  {
+    id: "SENS_CV",
+    label: "Sensors / CV",
+    short: "SEN",
+    kindKey: "GROUND",
+    sourceLabel: "Sensor Mesh",
+    providerIds: ["mock-streamer", "usgs-seismic", "nws-weather"],
+  },
+  {
+    id: "WX_RADAR",
+    label: "Weather / Ground",
+    short: "WX",
+    kindKey: "GROUND",
+    sourceLabel: "NWS / NEXRAD",
+    providerIds: ["mock-streamer", "nws-weather", "nexrad-radar"],
+  },
 ];
 
 const ALTITUDE_OPTIONS: AltitudeBand[] = ["ALL", "LOW", "MID", "HIGH", "SPACE"];
@@ -102,6 +139,36 @@ const toDms = (value: number, isLat: boolean): string => {
 };
 
 const formatFreshness = (value: string): string => value.replace("FRESHNESS_", "").replace("CIRCUIT_STATE_", "");
+
+const formatAge = (latencyMs: number): string => {
+  if (!Number.isFinite(latencyMs) || latencyMs < 0) {
+    return "unknown";
+  }
+  if (latencyMs < 5000) {
+    return "just now";
+  }
+  if (latencyMs < 60_000) {
+    return `${Math.floor(latencyMs / 1000)}s ago`;
+  }
+  if (latencyMs < 3_600_000) {
+    return `${Math.floor(latencyMs / 60_000)}m ago`;
+  }
+  return `${Math.floor(latencyMs / 3_600_000)}h ago`;
+};
+
+const isProviderStale = (freshness: string): boolean =>
+  freshness === "FRESHNESS_STALE" || freshness === "FRESHNESS_CRITICAL";
+
+const layerFreshnessMicrocopy = (freshness: string, latencyMs: number): string => {
+  const age = formatAge(latencyMs);
+  if (isProviderStale(freshness)) {
+    return `stale (${age})`;
+  }
+  if (freshness === "FRESHNESS_AGING") {
+    return `aging (${age})`;
+  }
+  return age;
+};
 
 const estimateScaleMeters = (cameraAlt: number): number => {
   if (!Number.isFinite(cameraAlt) || cameraAlt <= 0) {
@@ -316,22 +383,49 @@ const HUD: React.FC = () => {
               <span>Layers</span>
             </div>
             <div className={styles.layerList}>
-              {LAYER_OPTIONS.map((layer) => (
-                <button
-                  key={layer.id}
-                  className={clsx("hud-button", styles.layerButton, {
-                    [styles.activeLayer]: layers.includes(layer.id),
-                  })}
-                  onClick={() => toggleLayer(layer.id)}
-                  data-testid={`layer-${layer.id}`}
-                  aria-pressed={layers.includes(layer.id)}
-                >
-                  <span>{layer.label}</span>
-                  <span className={styles.layerCount}>
-                    {layer.kindKey ? dataPlaneStats.renderedByKind[layer.kindKey] ?? 0 : "--"}
-                  </span>
-                </button>
-              ))}
+              {LAYER_OPTIONS.map((layer) => {
+                const active = layers.includes(layer.id);
+                const provider =
+                  layer.providerIds
+                    .map((providerId) => providerStatus[providerId])
+                    .find((entry) => Boolean(entry)) ?? null;
+                const source = provider?.providerId ?? layer.sourceLabel;
+                const freshness = provider
+                  ? layerFreshnessMicrocopy(provider.freshness, provider.latencyMs)
+                  : "loading...";
+                const stale = provider ? isProviderStale(provider.freshness) : false;
+                const count = layer.kindKey ? dataPlaneStats.renderedByKind[layer.kindKey] ?? 0 : "--";
+                return (
+                  <button
+                    key={layer.id}
+                    className={clsx("hud-button", styles.layerButton, {
+                      [styles.activeLayer]: active,
+                      [styles.layerStale]: stale,
+                    })}
+                    onClick={() => toggleLayer(layer.id)}
+                    data-testid={`layer-${layer.id}`}
+                    aria-pressed={active}
+                  >
+                    <div className={styles.layerMetaWrap}>
+                      <div className={styles.layerMainRow}>
+                        <span>{layer.label}</span>
+                        <span className={styles.layerCount}>{count}</span>
+                      </div>
+                      <span className={styles.layerSubline}>
+                        {layer.short} · {source} · {freshness}
+                      </span>
+                    </div>
+                    <span
+                      className={clsx(styles.layerToggle, {
+                        [styles.layerToggleOn]: active,
+                        [styles.layerToggleOff]: !active,
+                      })}
+                    >
+                      {active ? "ON" : "OFF"}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -439,7 +533,8 @@ const HUD: React.FC = () => {
             <div className={styles.pillRow}>
               {[
                 { label: "DC", lat: 38.9072, lon: -77.0369, alt: 250_000 },
-                { label: "NYC", lat: 40.7128, lon: -74.006, alt: 250_000 },
+                { label: "SF", lat: 37.7749, lon: -122.4194, alt: 250_000 },
+                { label: "PTY", lat: 8.9824, lon: -79.5199, alt: 250_000 },
                 { label: "LON", lat: 51.5074, lon: -0.1278, alt: 250_000 },
                 { label: "TYO", lat: 35.6762, lon: 139.6503, alt: 250_000 },
                 { label: "GLB", lat: 20, lon: 0, alt: 18_000_000 },

@@ -227,6 +227,13 @@ const mapSpeedBandToRange = (band: SpeedBand): { minSpeedMs: number; maxSpeedMs:
   return { minSpeedMs: 0, maxSpeedMs: 30_000 };
 };
 
+const worldViewport = (): harpy.v1.IBoundingBox => ({
+  minLat: -90,
+  minLon: -180,
+  maxLat: 90,
+  maxLon: 180,
+});
+
 const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const viewerRef = useRef<HTMLDivElement>(null);
   const viewerInstance = useRef<Cesium.Viewer | null>(null);
@@ -299,6 +306,27 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     isLivePlaybackAllowedRef.current = isLive || isPlaying;
   }, [isLive, isPlaying]);
 
+  const computeViewport = (): harpy.v1.IBoundingBox => {
+    const viewer = viewerInstance.current;
+    if (!viewer) {
+      return worldViewport();
+    }
+    try {
+      const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
+      if (!rectangle) {
+        return worldViewport();
+      }
+      return {
+        minLat: Cesium.Math.toDegrees(rectangle.south),
+        minLon: Cesium.Math.toDegrees(rectangle.west),
+        maxLat: Cesium.Math.toDegrees(rectangle.north),
+        maxLon: Cesium.Math.toDegrees(rectangle.east),
+      };
+    } catch {
+      return worldViewport();
+    }
+  };
+
   const sendSubscription = (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
     const mappedLayers = mapUiLayersToProto(activeLayers);
     const timeRange = liveMode
@@ -316,7 +344,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         ? harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_LIVE
         : harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_PLAYBACK,
       timeRange,
-      viewport: { minLat: -90, minLon: -180, maxLat: 90, maxLon: 180 },
+      viewport: computeViewport(),
     });
     const envelope = harpy.v1.Envelope.create({
       schemaVersion: "1.0.0",
@@ -837,6 +865,17 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     };
     scene.postRender.addEventListener(postRenderListener);
 
+    const cameraMoveEndListener = () => {
+      if (!useWebSocket) {
+        return;
+      }
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        sendSubscription(socket, layersRef.current, isLiveRef.current, currentTimeRef.current);
+      }
+    };
+    viewer.camera.moveEnd.addEventListener(cameraMoveEndListener);
+
     // Setup Real WebSocket
     const wsUrl = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8080/ws";
     const relayDebugSnapshotUrl = resolveRelayDebugSnapshotUrl();
@@ -995,6 +1034,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       }
       pickHandler.destroy();
       scene.postRender.removeEventListener(postRenderListener);
+      viewer.camera.moveEnd.removeEventListener(cameraMoveEndListener);
       if (demoMode && streamer) {
         viewer.camera.changed.removeEventListener(cameraCenterListener);
       }

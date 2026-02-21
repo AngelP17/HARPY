@@ -9,3 +9,4 @@ prost-types.workspace = true
 
 [build-dependencies]
 tonic-build.workspace = true
+tempfile.workspace = true

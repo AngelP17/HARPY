@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 // Reuse provider implementations from harpy-ingest so local-node behavior
 // stays aligned with existing adapters while remaining single-process.
 #[path = "../../../harpy-ingest/src/adapters/adsb_mock.rs"]

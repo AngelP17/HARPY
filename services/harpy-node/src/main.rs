@@ -20,7 +20,6 @@ use harpy_proto::harpy::v1::{
     envelope, BoundingBox, CircuitState, Envelope, Freshness, LayerType, ProviderStatus,
     SubscriptionAck, SubscriptionRequest, TrackDelta, TrackDeltaBatch, TrackKind,
 };
-use metrics::{counter, gauge};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use prost::Message as ProstMessage;
 use serde::Serialize;
@@ -120,7 +119,7 @@ async fn ws_handler(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl
 async fn handle_socket(socket: WebSocket, state: AppState) {
     let client_id = Uuid::new_v4().to_string();
     state.subs.insert(client_id.clone(), default_subscription());
-    gauge!("harpy_ws_connections").increment(1.0);
+    metrics::increment_gauge!("harpy_ws_connections", 1.0);
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut rx = state.tx.subscribe();
@@ -166,7 +165,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
                             match encode_envelope(&envelope) {
                                 Ok(bytes) => {
-                                    counter!("harpy_tracks_sent").increment(filtered_count);
+                                    metrics::counter!("harpy_tracks_sent", filtered_count);
                                     if ws_tx.send(Message::Binary(bytes.into())).await.is_err() {
                                         break;
                                     }
@@ -184,7 +183,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
                             };
                             match encode_envelope(&envelope) {
                                 Ok(bytes) => {
-                                    counter!("harpy_provider_status_sent").increment(1);
+                                    metrics::counter!("harpy_provider_status_sent", 1);
                                     if ws_tx.send(Message::Binary(bytes.into())).await.is_err() {
                                         break;
                                     }
@@ -240,7 +239,7 @@ async fn handle_socket(socket: WebSocket, state: AppState) {
 
     write_task.abort();
     state.subs.remove(&client_id);
-    gauge!("harpy_ws_connections").decrement(1.0);
+    metrics::decrement_gauge!("harpy_ws_connections", 1.0);
 }
 
 async fn apply_subscription(state: &AppState, client_id: &str, req: SubscriptionRequest) {
@@ -445,11 +444,11 @@ async fn poll_provider(
                     meta: status_meta(source_label, item_count, true),
                 };
                 let _ = state.tx.send(ServerEvent::ProviderStatus(status));
-                counter!("harpy_provider_poll_success_total").increment(1);
+                metrics::counter!("harpy_provider_poll_success_total", 1);
             }
             Err(err) => {
                 consecutive_failures = consecutive_failures.saturating_add(1);
-                counter!("harpy_provider_poll_error_total").increment(1);
+                metrics::counter!("harpy_provider_poll_error_total", 1);
                 tracing::warn!(
                     "provider {} poll error: {}",
                     provider.provider_id(),

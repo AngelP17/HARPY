@@ -41,7 +41,9 @@ workerCtx.onmessage = (event: MessageEvent) => {
             providerId: envelope.providerStatus.providerId,
             circuitState: circuitName,
             freshness: freshnessName,
-            latencyMs
+            latencyMs,
+            lastSuccessTsMs: lastSuccess,
+            failureCount: envelope.providerStatus.failureCount ?? 0,
           } 
         });
       } else if (envelope.subscriptionAck) {

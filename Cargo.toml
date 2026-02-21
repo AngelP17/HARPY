@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "services/harpy-node",
     "services/harpy-relay",
     "services/harpy-ingest",
     "services/harpy-fusion",
@@ -57,7 +58,7 @@ jsonwebtoken = "9.2"
 bcrypt = "0.15"
 
 # Utilities
-uuid = { version = "1.6", features = ["v4", "serde"] }
+uuid = { version = "=1.6.1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 url = "2.5"
 bytes = "1.5"
@@ -65,6 +66,7 @@ futures = "0.3"
 dashmap = "5.5"
 h3o = "0.6"
 reqwest = { version = "0.11", features = ["json"] }
+tempfile = "=3.23.0"
 
 # Testing
 mockall = "0.12"

@@ -184,11 +184,70 @@
 
 .layerButton {
   justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  text-transform: none;
+}
+
+.layerMetaWrap {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+
+.layerMainRow {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .layerCount {
   font-family: var(--hud-font-mono);
   color: rgba(216, 233, 248, 0.78);
+  font-size: 10px;
+}
+
+.layerSubline {
+  max-width: 100%;
+  font-family: var(--hud-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(190, 213, 237, 0.74);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.layerToggle {
+  border-radius: 999px;
+  border: 1px solid rgba(105, 170, 240, 0.36);
+  background: rgba(9, 24, 42, 0.66);
+  min-width: 44px;
+  padding: 4px 8px;
+  text-align: center;
+  font-family: var(--hud-font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.layerToggleOn {
+  border-color: rgba(143, 250, 216, 0.6);
+  color: #9ffbdd;
+}
+
+.layerToggleOff {
+  color: rgba(204, 223, 243, 0.68);
+}
+
+.layerStale {
+  opacity: 0.62;
 }
 
 .activeLayer {

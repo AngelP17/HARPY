@@ -1,28 +1,9 @@
-import type { Metadata } from "next";
-import { IBM_Plex_Sans, JetBrains_Mono, Sora } from "next/font/google";
 import "./globals.css";
-
-const harpyDisplay = Sora({
-  variable: "--font-harpy-display",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
-
-const harpyBody = IBM_Plex_Sans({
-  variable: "--font-harpy-body",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const harpyMono = JetBrains_Mono({
-  variable: "--font-harpy-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
+import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "HARPY Fusion Console",
-  description: "Compliance-first geospatial intelligence fusion platform",
+  title: "HARPY",
+  description: "Operator HUD (local-first)",
 };
 
 export default function RootLayout({
@@ -32,9 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${harpyDisplay.variable} ${harpyBody.variable} ${harpyMono.variable}`}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

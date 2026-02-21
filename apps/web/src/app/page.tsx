@@ -1,34 +1,43 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import HUD from "@/components/HUD/HUD";
-import URLManager from "@/components/Logic/URLManager";
+import { DataLinkBar } from "@/hud/DataLinkBar";
+import { LayersPanel } from "@/hud/LayersPanel";
+import { VisionPanel } from "@/hud/VisionPanel";
+import { PresetsBar } from "@/hud/PresetsBar";
+import { useHarpyRuntime } from "@/runtime/useHarpyRuntime";
 
-// CesiumViewer needs to be dynamic (client-side only)
-const CesiumViewer = dynamic(() => import("@/components/Map/CesiumViewer"), {
+const CesiumScene = dynamic(() => import("@/scene/CesiumScene"), {
   ssr: false,
-  loading: () => <div className="cesium-viewer" style={{ backgroundColor: "#000" }} />,
+  loading: () => (
+    <div style={{ backgroundColor: "#070a10", width: "100%", height: "100%" }} />
+  ),
 });
 
-export default function Home() {
-  const ionToken = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN;
-  const disableCesium =
-    process.env.NEXT_PUBLIC_DISABLE_CESIUM === "true"
-    || process.env.NEXT_PUBLIC_E2E_SEED === "true";
+export default function Page() {
+  useHarpyRuntime();
 
   return (
-    <main style={{ position: "relative", width: "100vw", height: "100vh" }}>
-      <URLManager />
-      {disableCesium ? (
-        <div
-          className="cesium-viewer"
-          data-testid="cesium-disabled"
-          style={{ backgroundColor: "#05080d" }}
-        />
-      ) : (
-        <CesiumViewer ionToken={ionToken} />
-      )}
-      <HUD />
+    <main className="app">
+      <div className="scene">
+        <CesiumScene />
+      </div>
+
+      <div className="hud top">
+        <DataLinkBar />
+      </div>
+
+      <div className="hud left">
+        <LayersPanel />
+      </div>
+
+      <div className="hud right">
+        <VisionPanel />
+      </div>
+
+      <div className="hud bottom">
+        <PresetsBar />
+      </div>
     </main>
   );
 }

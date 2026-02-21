@@ -118,3 +118,23 @@ verify:
 clean:
 	cargo clean
 	$(COMPOSE) down -v
+
+# ======= Local-first (Option A) targets =======
+
+dev-node:
+	cargo run -p harpy-node
+
+dev-web:
+	cd apps/web && NEXT_PUBLIC_RELAY_HOST=localhost:8080 npm install --silent && NEXT_PUBLIC_RELAY_HOST=localhost:8080 npm run dev
+
+dev:
+	./scripts/dev.sh
+
+prod-local:
+	./scripts/run_local_prod.sh
+
+docker-local-up:
+	docker compose -f docker-compose.local.yml up --build
+
+docker-local-down:
+	docker compose -f docker-compose.local.yml down

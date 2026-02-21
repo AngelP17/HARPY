@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-status dev-logs dev-down dev-health lint test build perf-check proto verify clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -11,6 +11,7 @@ help:
 	@echo "  make dev-up               - Start full backend stack in offline mode (default)"
 	@echo "  make dev-up-offline       - Start full backend stack with mock/offline providers"
 	@echo "  make dev-up-online        - Start full backend stack with real online providers"
+	@echo "  make dev-demo             - Start backend + launch frontend in cinematic DEMO_MODE"
 	@echo "  make dev-status           - Show compose service status"
 	@echo "  make dev-logs             - Follow backend logs"
 	@echo "  make dev-health           - Check backend health endpoints"
@@ -36,6 +37,12 @@ dev-up-online:
 	$(MAKE) dev-health
 	@echo "Online backend stack is ready."
 	@echo "Frontend (online): cd apps/web && npm run dev:online"
+
+
+dev-demo: dev-up-offline
+	@echo "Starting HARPY web in DEMO_MODE (dense clustered stream around current camera)..."
+	@echo "Open http://localhost:3000 once Next.js is ready."
+	@cd apps/web && npm run dev:demo
 
 dev-status:
 	$(COMPOSE) ps

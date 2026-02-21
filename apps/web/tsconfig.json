@@ -19,7 +19,8 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@harpy/shared-types": ["../../packages/shared-types/src/harpy"]
     }
   },
   "include": [

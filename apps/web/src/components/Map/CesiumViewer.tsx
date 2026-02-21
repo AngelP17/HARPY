@@ -279,6 +279,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
   const useWebSocket = streamMode !== "offline";
   const useMockStreamer = streamMode !== "online";
   const mockOnlyMode = streamMode === "offline";
+  const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 
   useEffect(() => {
     layersRef.current = layers;
@@ -766,7 +767,28 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
           }
         })
       : null;
+    if (demoMode && streamer) {
+      const cartographic = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC);
+      streamer.setCenter({
+        lat: Cesium.Math.toDegrees(cartographic.latitude),
+        lon: Cesium.Math.toDegrees(cartographic.longitude),
+      });
+    }
     streamer?.start();
+
+    const cameraCenterListener = () => {
+      if (!demoMode || !streamer) {
+        return;
+      }
+      const cartographic = Cesium.Cartographic.fromCartesian(viewer.camera.positionWC);
+      streamer.setCenter({
+        lat: Cesium.Math.toDegrees(cartographic.latitude),
+        lon: Cesium.Math.toDegrees(cartographic.longitude),
+      });
+    };
+    if (demoMode && streamer) {
+      viewer.camera.changed.addEventListener(cameraCenterListener);
+    }
 
     let debugPollTimer: ReturnType<typeof setInterval> | null = null;
     let debugSnapshotUnavailable = false;
@@ -828,6 +850,9 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
       }
       pickHandler.destroy();
       scene.postRender.removeEventListener(postRenderListener);
+      if (demoMode && streamer) {
+        viewer.camera.changed.removeEventListener(cameraCenterListener);
+      }
       if (viewerInstance.current) {
         viewerInstance.current.destroy();
         viewerInstance.current = null;
@@ -854,6 +879,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     upsertLink,
     setSelectedTrack,
     updateProviderStatus,
+    demoMode,
     useMockStreamer,
     useWebSocket,
   ]);

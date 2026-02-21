@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed"
+    "test:e2e:headed": "playwright test --headed",
+    "dev:demo": "NEXT_PUBLIC_STREAM_MODE=offline NEXT_PUBLIC_MAP_MODE=offline NEXT_PUBLIC_DEMO_MODE=true next dev"
   },
   "dependencies": {
     "@harpy/shared-types": "*",

@@ -84,6 +84,7 @@ export interface CommandFeedback {
 }
 
 const E2E_SEED_ENABLED = process.env.NEXT_PUBLIC_E2E_SEED === "true";
+const DEMO_MODE_ENABLED = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
 const E2E_SEED_TS_MS = 1_771_625_797_000;
 
 const SEEDED_ALERT: Alert = {
@@ -186,7 +187,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   visionMode: "NORMAL",
   setVisionMode: (mode) => set({ visionMode: mode }),
-  layers: ["ADSB"],
+  layers: DEMO_MODE_ENABLED ? ["ADSB", "TLE_SAT", "SENS_CV", "WX_RADAR"] : ["ADSB"],
   toggleLayer: (layer) =>
     set((state) => ({
       layers: state.layers.includes(layer)

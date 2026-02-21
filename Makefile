@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health lint test build perf-check proto verify clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local docker-local-up docker-local-down lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -11,6 +11,12 @@ help:
 	@echo "  make dev-up               - Start full backend stack in offline mode (default)"
 	@echo "  make dev-up-offline       - Start full backend stack with mock/offline providers"
 	@echo "  make dev-up-online        - Start full backend stack with real online providers"
+	@echo "  make dev-node             - Start single local harpy-node (no Redis/Postgres)"
+	@echo "  make dev-web              - Start web app pointed at local harpy-node"
+	@echo "  make dev                  - Run local node + web together"
+	@echo "  make prod-local           - Build and run local production profile"
+	@echo "  make docker-local-up      - Start optional local docker-compose stack"
+	@echo "  make docker-local-down    - Stop optional local docker-compose stack"
 	@echo "  make dev-demo             - Start backend + launch frontend in cinematic DEMO_MODE"
 	@echo "  make dev-status           - Show compose service status"
 	@echo "  make dev-logs             - Follow backend logs"
@@ -73,6 +79,24 @@ dev-health:
 
 dev-down:
 	$(COMPOSE) down
+
+dev-node:
+	cargo run -p harpy-node
+
+dev-web:
+	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws npm --prefix apps/web install && NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws npm --prefix apps/web run dev
+
+dev:
+	./scripts/dev.sh
+
+prod-local:
+	./scripts/run_local_prod.sh
+
+docker-local-up:
+	$(COMPOSE) -f docker-compose.local.yml up --build
+
+docker-local-down:
+	$(COMPOSE) -f docker-compose.local.yml down
 
 lint:
 	@echo "Running Clippy..."

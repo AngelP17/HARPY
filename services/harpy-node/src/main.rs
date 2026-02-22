@@ -150,6 +150,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(provider_loop_tle(state.clone()));
     tokio::spawn(provider_loop_ground_sensor(state.clone()));
     tokio::spawn(provider_loop_ground_weather(state.clone()));
+    tokio::spawn(provider_loop_ground_camera(state.clone()));
 
     let app = Router::new()
         .route("/health", get(health))
@@ -516,6 +517,12 @@ async fn provider_loop_ground_weather(state: AppState) {
     let interval_secs = env_u64("GROUND_WEATHER_POLL_INTERVAL_SECS", 3);
     let provider: Arc<dyn Provider> = Arc::new(GroundMockProvider::weather());
     poll_provider(provider, "Ground Weather", interval_secs, state).await;
+}
+
+async fn provider_loop_ground_camera(state: AppState) {
+    let interval_secs = env_u64("GROUND_CAMERA_POLL_INTERVAL_SECS", 2);
+    let provider: Arc<dyn Provider> = Arc::new(GroundMockProvider::camera());
+    poll_provider(provider, "Ground Camera", interval_secs, state).await;
 }
 
 async fn poll_provider(

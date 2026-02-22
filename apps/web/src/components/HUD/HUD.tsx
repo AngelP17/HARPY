@@ -78,12 +78,20 @@ const LAYER_OPTIONS: LayerOption[] = [
     providerIds: ["mock-tle", "celestrak-gp", "mock-streamer"],
   },
   {
+    id: "CAM_RT",
+    label: "Realtime Cameras",
+    short: "CAM",
+    kindKey: "GROUND",
+    sourceLabel: "Camera Mesh",
+    providerIds: ["mock-camera", "mock-sensor", "mock-streamer"],
+  },
+  {
     id: "SENS_CV",
     label: "Sensors / CV",
     short: "SEN",
     kindKey: "GROUND",
     sourceLabel: "Sensor Mesh",
-    providerIds: ["mock-sensor", "mock-streamer", "usgs-seismic", "nws-weather"],
+    providerIds: ["mock-sensor", "mock-streamer", "usgs-seismic", "nws-weather", "mock-camera"],
   },
   {
     id: "WX_RADAR",

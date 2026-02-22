@@ -163,6 +163,10 @@ const mapUiLayersToProto = (activeLayers: string[]): number[] => {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_AIRCRAFT);
     } else if (layer === "TLE_SAT") {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_SATELLITE);
+    } else if (layer === "CAM_RT") {
+      mapped.add(harpy.v1.LayerType.LAYER_TYPE_CAMERA);
+      mapped.add(harpy.v1.LayerType.LAYER_TYPE_DETECTION);
+      mapped.add(harpy.v1.LayerType.LAYER_TYPE_GROUND);
     } else if (layer === "SENS_CV") {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_DETECTION);
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_CAMERA);
@@ -185,7 +189,7 @@ const mapUiLayersToTrackKinds = (activeLayers: string[]): number[] => {
       kinds.add(harpy.v1.TrackKind.TRACK_KIND_AIRCRAFT);
     } else if (layer === "TLE_SAT") {
       kinds.add(harpy.v1.TrackKind.TRACK_KIND_SATELLITE);
-    } else if (layer === "SENS_CV" || layer === "WX_RADAR") {
+    } else if (layer === "CAM_RT" || layer === "SENS_CV" || layer === "WX_RADAR") {
       kinds.add(harpy.v1.TrackKind.TRACK_KIND_GROUND);
     }
   }

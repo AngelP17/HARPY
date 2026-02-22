@@ -207,7 +207,7 @@ interface AppState {
 export const useStore = create<AppState>((set) => ({
   visionMode: "NORMAL",
   setVisionMode: (mode) => set({ visionMode: mode }),
-  layers: ["ADSB", "TLE_SAT", "SENS_CV", "WX_RADAR"],
+  layers: ["ADSB", "TLE_SAT", "CAM_RT", "SENS_CV", "WX_RADAR"],
   toggleLayer: (layer) =>
     set((state) => ({
       layers: state.layers.includes(layer)

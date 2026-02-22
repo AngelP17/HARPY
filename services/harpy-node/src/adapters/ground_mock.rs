@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub enum GroundProfile {
     Sensor,
     Weather,
+    Camera,
 }
 
 pub struct GroundMockProvider {
@@ -31,6 +32,13 @@ impl GroundMockProvider {
         }
     }
 
+    pub fn camera() -> Self {
+        Self {
+            provider_id: "mock-camera".to_string(),
+            profile: GroundProfile::Camera,
+        }
+    }
+
     fn generate_tracks(&self) -> Vec<TrackDelta> {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -41,6 +49,7 @@ impl GroundMockProvider {
         match self.profile {
             GroundProfile::Sensor => self.generate_sensor_tracks(ts, phase),
             GroundProfile::Weather => self.generate_weather_tracks(ts, phase),
+            GroundProfile::Camera => self.generate_camera_tracks(ts, phase),
         }
     }
 
@@ -109,6 +118,46 @@ impl GroundMockProvider {
                     }),
                     heading: ((phase * 60.0) + idx as f64 * 70.0) % 360.0,
                     speed: 18.0 + idx as f64 * 2.5,
+                    ts_ms: ts,
+                    provider_id: self.provider_id.clone(),
+                    meta,
+                }
+            })
+            .collect()
+    }
+
+    fn generate_camera_tracks(&self, ts: u64, phase: f64) -> Vec<TrackDelta> {
+        let camera_nodes = [
+            ("cam_sf_01", "SF", 37.7749, -122.4194),
+            ("cam_dc_01", "DC", 38.9072, -77.0369),
+            ("cam_pty_01", "PTY", 8.9824, -79.5199),
+            ("cam_lon_01", "LON", 51.5072, -0.1276),
+            ("cam_tyo_01", "TYO", 35.6762, 139.6503),
+        ];
+
+        camera_nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, (id, zone, lat, lon))| {
+                let drift = (phase * 0.7 + idx as f64).sin() * 0.015;
+                let mut meta = HashMap::new();
+                meta.insert("sensor_type".to_string(), "realtime_camera".to_string());
+                meta.insert("zone".to_string(), (*zone).to_string());
+                meta.insert("fps".to_string(), format!("{}", 22 + (idx as i32 % 4)));
+                meta.insert(
+                    "status".to_string(),
+                    if idx % 2 == 0 { "LIVE" } else { "ACTIVE" }.to_string(),
+                );
+                TrackDelta {
+                    id: (*id).to_string(),
+                    kind: 3, // Ground track for camera sensors
+                    position: Some(Position {
+                        lat: lat + drift,
+                        lon: lon + drift * 0.5,
+                        alt: 18.0 + idx as f64 * 2.0,
+                    }),
+                    heading: ((phase * 30.0) + idx as f64 * 72.0) % 360.0,
+                    speed: 1.5 + idx as f64 * 0.3,
                     ts_ms: ts,
                     provider_id: self.provider_id.clone(),
                     meta,

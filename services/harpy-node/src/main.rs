@@ -1,8 +1,8 @@
 mod adapters;
 
 use adapters::{
-    adsb_mock::AdsbMockProvider, adsb_opensky::OpenSkyProvider, tle_celestrak::CelesTrakProvider,
-    tle_mock::TleMockProvider, Provider,
+    adsb_mock::AdsbMockProvider, adsb_opensky::OpenSkyProvider, ground_mock::GroundMockProvider,
+    tle_celestrak::CelesTrakProvider, tle_mock::TleMockProvider, Provider,
 };
 
 use axum::{
@@ -148,6 +148,8 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(provider_loop_adsb(state.clone()));
     tokio::spawn(provider_loop_tle(state.clone()));
+    tokio::spawn(provider_loop_ground_sensor(state.clone()));
+    tokio::spawn(provider_loop_ground_weather(state.clone()));
 
     let app = Router::new()
         .route("/health", get(health))
@@ -502,6 +504,18 @@ async fn provider_loop_tle(state: AppState) {
     };
 
     poll_provider(provider, "CelesTrak", interval_secs, state).await;
+}
+
+async fn provider_loop_ground_sensor(state: AppState) {
+    let interval_secs = env_u64("GROUND_SENSOR_POLL_INTERVAL_SECS", 2);
+    let provider: Arc<dyn Provider> = Arc::new(GroundMockProvider::sensor());
+    poll_provider(provider, "Ground Sensor", interval_secs, state).await;
+}
+
+async fn provider_loop_ground_weather(state: AppState) {
+    let interval_secs = env_u64("GROUND_WEATHER_POLL_INTERVAL_SECS", 3);
+    let provider: Arc<dyn Provider> = Arc::new(GroundMockProvider::weather());
+    poll_provider(provider, "Ground Weather", interval_secs, state).await;
 }
 
 async fn poll_provider(

@@ -166,6 +166,7 @@ const mapUiLayersToProto = (activeLayers: string[]): number[] => {
     } else if (layer === "SENS_CV") {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_DETECTION);
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_CAMERA);
+      mapped.add(harpy.v1.LayerType.LAYER_TYPE_GROUND);
     } else if (layer === "WX_RADAR") {
       mapped.add(harpy.v1.LayerType.LAYER_TYPE_GROUND);
     }
@@ -306,27 +307,6 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
     isLivePlaybackAllowedRef.current = isLive || isPlaying;
   }, [isLive, isPlaying]);
 
-  const computeViewport = useCallback((): harpy.v1.IBoundingBox => {
-    const viewer = viewerInstance.current;
-    if (!viewer) {
-      return worldViewport();
-    }
-    try {
-      const rectangle = viewer.camera.computeViewRectangle(viewer.scene.globe.ellipsoid);
-      if (!rectangle) {
-        return worldViewport();
-      }
-      return {
-        minLat: Cesium.Math.toDegrees(rectangle.south),
-        minLon: Cesium.Math.toDegrees(rectangle.west),
-        maxLat: Cesium.Math.toDegrees(rectangle.north),
-        maxLon: Cesium.Math.toDegrees(rectangle.east),
-      };
-    } catch {
-      return worldViewport();
-    }
-  }, []);
-
   const sendSubscription = useCallback(
     (socket: WebSocket, activeLayers: string[], liveMode: boolean, endTsMs: number) => {
       const mappedLayers = mapUiLayersToProto(activeLayers);
@@ -345,7 +325,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
           ? harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_LIVE
           : harpy.v1.SubscriptionMode.SUBSCRIPTION_MODE_PLAYBACK,
         timeRange,
-        viewport: computeViewport(),
+        viewport: worldViewport(),
       });
       const envelope = harpy.v1.Envelope.create({
         schemaVersion: "1.0.0",
@@ -362,7 +342,7 @@ const CesiumViewer: React.FC<CesiumViewerProps> = ({ ionToken }) => {
         mappedLayers,
       );
     },
-    [computeViewport],
+    [],
   );
 
   const renderBulkTrails = useCallback(() => {

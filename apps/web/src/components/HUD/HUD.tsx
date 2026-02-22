@@ -83,7 +83,7 @@ const LAYER_OPTIONS: LayerOption[] = [
     short: "SEN",
     kindKey: "GROUND",
     sourceLabel: "Sensor Mesh",
-    providerIds: ["mock-streamer", "usgs-seismic", "nws-weather"],
+    providerIds: ["mock-sensor", "mock-streamer", "usgs-seismic", "nws-weather"],
   },
   {
     id: "WX_RADAR",
@@ -91,7 +91,7 @@ const LAYER_OPTIONS: LayerOption[] = [
     short: "WX",
     kindKey: "GROUND",
     sourceLabel: "NWS / NEXRAD",
-    providerIds: ["mock-streamer", "nws-weather", "nexrad-radar"],
+    providerIds: ["mock-weather", "mock-streamer", "nws-weather", "nexrad-radar"],
   },
 ];
 

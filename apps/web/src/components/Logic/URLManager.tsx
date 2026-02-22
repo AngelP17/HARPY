@@ -43,7 +43,15 @@ const URLManager: React.FC = () => {
           .map((entry) => entry.trim())
           .filter((entry) => entry.length > 0);
         if (parsedLayers.length > 0) {
-          setLayers(parsedLayers);
+          const migratedLayers = Array.from(new Set(parsedLayers));
+          // Backward-compatible migration: older shared URLs don't include CAM_RT.
+          if (
+            (migratedLayers.includes("SENS_CV") || migratedLayers.includes("WX_RADAR")) &&
+            !migratedLayers.includes("CAM_RT")
+          ) {
+            migratedLayers.push("CAM_RT");
+          }
+          setLayers(migratedLayers);
         }
       }
 

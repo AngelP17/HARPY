@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates ./crates
 COPY services ./services
 COPY proto ./proto

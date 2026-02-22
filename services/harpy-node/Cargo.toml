@@ -28,3 +28,9 @@ metrics.workspace = true
 metrics-exporter-prometheus.workspace = true
 
 harpy-proto = { path = "../../crates/harpy-proto" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "process", "time"] }
+tokio-tungstenite = "0.23.1"
+url = "2.5.4"
+serde_json = { workspace = true }

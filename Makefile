@@ -1,4 +1,4 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local prod-ready-local docker-local-up docker-local-down confidence-gate lint test build perf-check proto verify clean
+.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local prod-ready-local docker-local-up docker-local-down confidence-gate confidence-refactor lint test build perf-check proto verify clean
 
 COMPOSE ?= docker compose
 BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
@@ -16,7 +16,8 @@ help:
 	@echo "  make dev-logs             - Follow backend logs"
 	@echo "  make dev-health           - Check backend health endpoints"
 	@echo "  make dev-down             - Stop local docker compose stack"
-	@echo "  make confidence-gate      - Validate WS filtering + metrics invariants"
+	@echo "  make confidence-gate      - Run evidence-based refactor confidence gate"
+	@echo "  make confidence-refactor  - Alias for confidence-gate script"
 	@echo "  make prod-ready-local     - Full local production readiness gate"
 	@echo "  make lint         - Run Clippy linter"
 	@echo "  make test         - Run all tests"
@@ -71,6 +72,9 @@ docker-local-down:
 
 confidence-gate:
 	./scripts/confidence_gate.sh
+
+confidence-refactor:
+	./scripts/refactor_completion_confidence_gate.sh
 
 dev-status:
 	$(COMPOSE) ps

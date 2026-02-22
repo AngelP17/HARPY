@@ -85,6 +85,62 @@ CONFIDENCE_GATE_EXTERNAL_NODE=1 \
   CONFIDENCE_GATE_WS_URL="$NODE_WS_URL" \
   ./scripts/confidence_gate.sh
 
+# Ensure websocket connection and stream metrics are emitted deterministically before soak checks.
+export PROD_READINESS_WS_URL="$NODE_WS_URL"
+node --input-type=module <<'JS'
+const wsUrl = process.env.PROD_READINESS_WS_URL || "ws://127.0.0.1:8080/ws";
+let WebSocketImpl = globalThis.WebSocket;
+if (!WebSocketImpl) {
+  const wsModule = await import("ws");
+  WebSocketImpl = wsModule.WebSocket ?? wsModule.default;
+}
+if (!WebSocketImpl) {
+  throw new Error("WebSocket implementation is unavailable");
+}
+let protobuf;
+try {
+  ({ default: protobuf } = await import("./node_modules/protobufjs/index.js"));
+} catch {
+  ({ default: protobuf } = await import("./packages/shared-types/node_modules/protobufjs/index.js"));
+}
+
+const root = await protobuf.load("./proto/harpy/v1/harpy.proto");
+const Envelope = root.lookupType("harpy.v1.Envelope");
+const SubscriptionMode = root.lookupEnum("harpy.v1.SubscriptionMode").values;
+const LayerType = root.lookupEnum("harpy.v1.LayerType").values;
+
+await new Promise((resolve, reject) => {
+  const ws = new WebSocketImpl(wsUrl);
+  const timeout = setTimeout(() => {
+    ws.close();
+    reject(new Error("WS probe timeout"));
+  }, 5000);
+  ws.binaryType = "arraybuffer";
+  ws.onopen = () => {
+    const payload = Envelope.create({
+      schemaVersion: "1.0.0",
+      serverTsMs: Date.now(),
+      subscriptionRequest: {
+        viewport: { minLat: -90, minLon: -180, maxLat: 90, maxLon: 180 },
+        layers: [LayerType.LAYER_TYPE_AIRCRAFT, LayerType.LAYER_TYPE_SATELLITE],
+        mode: SubscriptionMode.SUBSCRIPTION_MODE_LIVE,
+        timeRange: { live: {} },
+      },
+    });
+    ws.send(Envelope.encode(payload).finish());
+    setTimeout(() => {
+      clearTimeout(timeout);
+      ws.close();
+      resolve();
+    }, 2200);
+  };
+  ws.onerror = (err) => {
+    clearTimeout(timeout);
+    reject(err instanceof Error ? err : new Error("WS probe failed"));
+  };
+});
+JS
+
 finish_at=$((SECONDS + SOAK_SECONDS))
 while [[ "$SECONDS" -lt "$finish_at" ]]; do
   health_payload="$(curl -fsS "${NODE_HTTP_URL}/health")"

@@ -255,3 +255,27 @@ jobs:
         env:
           PROD_READINESS_SOAK_SECONDS: "20"
         run: make prod-ready-local
+
+  refactor-confidence:
+    name: Refactor Confidence
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Build harpy-node (debug) for WS contract test
+        run: cargo build -p harpy-node
+
+      - name: Run WS contract integration test
+        run: cargo test -p harpy-node --tests
+
+      - name: Refactor completion confidence gate
+        run: ./scripts/refactor_completion_confidence_gate.sh

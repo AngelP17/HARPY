@@ -1,0 +1,8 @@
+{
+  "score": 88,
+  "notes": [
+    "No TODOs in critical paths (WS handler, provider loops, metrics)",
+    "Trust boundaries documented (env flags, no secrets in web)",
+    "No unsafe Rust; dependencies are pinned; CI uses stable toolchain"
+  ]
+}

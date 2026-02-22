@@ -1,0 +1,9 @@
+{
+  "score": 90,
+  "notes": [
+    "cargo test --workspace passes",
+    "harpy-node WS contract test passes",
+    "local production readiness gate passes (boot + endpoints + soak)",
+    "web build passes"
+  ]
+}

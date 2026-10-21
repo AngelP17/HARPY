@@ -1,40 +1,29 @@
-import type { Metadata } from "next";
-import { IBM_Plex_Sans, JetBrains_Mono, Sora } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
 import "./globals.css";
 
-const harpyDisplay = Sora({
-  variable: "--font-harpy-display",
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-});
-
-const harpyBody = IBM_Plex_Sans({
-  variable: "--font-harpy-body",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
-
-const harpyMono = JetBrains_Mono({
-  variable: "--font-harpy-mono",
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-});
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || "";
 
 export const metadata: Metadata = {
-  title: "HARPY Fusion Console",
-  description: "Compliance-first geospatial intelligence fusion platform",
+  title: "HARPY Monitor",
+  description:
+    "Real-time geospatial monitor: USGS earthquakes and SGP4-propagated satellites with full provenance and recorded-history replay. No simulated data.",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#07080b",
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className={`${harpyDisplay.variable} ${harpyBody.variable} ${harpyMono.variable}`}>
-        {children}
-      </body>
+      <head>
+        <link rel="stylesheet" href={`${BASE}/cesium/Widgets/widgets.css`} />
+      </head>
+      <body>{children}</body>
     </html>
   );
 }

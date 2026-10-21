@@ -4,7 +4,7 @@ target/
 *.pdb
 
 # Cargo
-Cargo.lock
+# Cargo.lock is committed: harpy-core is a binary and CI builds with --locked
 
 # Environment
 .env
@@ -22,9 +22,6 @@ Cargo.lock
 .DS_Store
 Thumbs.db
 
-# Docker volumes
-postgres_data/
-redis_data/
 
 # Node.js (for future frontend)
 node_modules/
@@ -47,3 +44,10 @@ coverage/
 *.dylib
 *.dll
 node_modules
+
+# HARPY local data
+data/
+site/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

@@ -1,0 +1,158 @@
+name: Monitor (ingest + publish)
+
+# The production pipeline for the public read-only deployment (GitHub Pages):
+#   restore DB -> ingest real upstream data -> export data/v1 -> live acceptance -> publish site -> save DB
+# The SQLite database is the source of truth and lives as a single compressed file on the
+# orphan `harpy-data` branch (force-pushed each run, so history does not grow).
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      force_celestrak:
+        description: "Re-download CelesTrak groups even if fetched in the last 2 hours"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "services/harpy-core/**"
+      - ".github/workflows/monitor.yml"
+
+permissions:
+  contents: write # push the harpy-data branch
+  pages: write
+  id-token: write
+
+concurrency:
+  group: harpy-monitor
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  DB: data/harpy.sqlite
+  HARPY_USER_AGENT: "HARPY/0.1 (+https://github.com/${{ github.repository }}; scheduled monitor)"
+  HARPY_REFRESH_INTERVAL_SECS: "900"
+  HARPY_STALE_AFTER_SECS: "3600"
+  HARPY_RETENTION_EARTHQUAKE_DAYS: "30"
+  HARPY_RETENTION_ELEMENTS_DAYS: "10"
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore observation database
+        run: |
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin harpy-data >/dev/null 2>&1; then
+            git fetch --depth 1 origin harpy-data
+            git show FETCH_HEAD:harpy.sqlite.zst > data/harpy.sqlite.zst
+            zstd -d -f data/harpy.sqlite.zst -o "$DB"
+            echo "restored $(du -h "$DB" | cut -f1) database"
+          else
+            echo "::notice::No harpy-data branch yet. Starting a new database (first run backfills 7 days from USGS)."
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build harpy-core
+        run: cargo build --release -p harpy-core --locked
+
+      - name: Ingest real upstream data
+        id: ingest
+        env:
+          HARPY_COMMIT: ${{ github.sha }}
+        run: |
+          set +e
+          FORCE=""
+          if [ "${{ inputs.force_celestrak }}" = "true" ]; then FORCE="--force-celestrak"; fi
+          ./target/release/harpy-core ingest --db "$DB" $FORCE | tee ingest.json
+          code=${PIPESTATUS[0]}
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          # 2 = every fetch failed. That is recorded as UNAVAILABLE and still published honestly.
+          if [ "$code" = "1" ]; then exit 1; fi
+          exit 0
+
+      - name: Integrity check
+        run: ./target/release/harpy-core check --db "$DB"
+
+      - name: Export data documents
+        env:
+          HARPY_COMMIT: ${{ github.sha }}
+        run: ./target/release/harpy-core export --db "$DB" --out site
+
+      - name: Live acceptance
+        id: acceptance
+        continue-on-error: true
+        run: node scripts/live-acceptance.mjs site/data/v1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Restore web build
+        id: webcache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/out
+          key: web-out-${{ hashFiles('package-lock.json', 'apps/web/**', '!apps/web/out/**') }}
+      - name: Build web
+        if: steps.webcache.outputs.cache-hit != 'true'
+        env:
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          npm ci
+          npm --workspace apps/web run build
+          node apps/web/scripts/check-no-mocks.mjs apps/web/out
+
+      - name: Assemble site
+        run: |
+          cp -r apps/web/out/. site/
+          touch site/.nojekyll
+          du -sh site
+
+      - name: Save observation database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./target/release/harpy-core backup --db "$DB" --to /tmp/harpy.sqlite
+          zstd -19 -q -f /tmp/harpy.sqlite -o /tmp/harpy.sqlite.zst
+          mkdir /tmp/datarepo && cd /tmp/datarepo
+          git init -q -b harpy-data
+          cp /tmp/harpy.sqlite.zst .
+          printf '# harpy-data\n\nSQLite observation store for the public HARPY deployment (zstd).\nWritten by .github/workflows/monitor.yml. Force-pushed each run; do not commit here.\n' > README.md
+          git -c user.name="harpy-monitor" -c user.email="harpy-monitor@users.noreply.github.com" add -A
+          git -c user.name="harpy-monitor" -c user.email="harpy-monitor@users.noreply.github.com" commit -q -m "observations $(date -u +%FT%TZ) from ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" harpy-data
+          echo "saved $(du -h /tmp/harpy.sqlite.zst | cut -f1) compressed"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "### Ingest"
+            echo '```json'
+            cat ingest.json 2>/dev/null || echo "no ingest output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.acceptance.outcome }}" = "failure" ]; then
+            echo "::error::Live acceptance failed. The honest state was still published."
+            exit 1
+          fi

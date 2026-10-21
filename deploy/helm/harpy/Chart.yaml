@@ -1,6 +1,0 @@
-apiVersion: v2
-name: harpy
-description: HARPY enterprise deployment chart
-version: 0.1.0
-appVersion: "0.1.0"
-type: application

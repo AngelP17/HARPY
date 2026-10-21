@@ -1,34 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import HUD from "@/components/HUD/HUD";
-import URLManager from "@/components/Logic/URLManager";
 
-// CesiumViewer needs to be dynamic (client-side only)
-const CesiumViewer = dynamic(() => import("@/components/Map/CesiumViewer"), {
+// Cesium needs the browser; the whole console is client-rendered into the static export.
+const App = dynamic(() => import("@/components/App"), {
   ssr: false,
-  loading: () => <div className="cesium-viewer" style={{ backgroundColor: "#000" }} />,
+  loading: () => (
+    <main style={{ display: "grid", placeItems: "center", height: "100dvh", color: "#8b93a1" }}>Loading HARPY…</main>
+  ),
 });
 
-export default function Home() {
-  const ionToken = process.env.NEXT_PUBLIC_CESIUM_ION_TOKEN;
-  const disableCesium =
-    process.env.NEXT_PUBLIC_DISABLE_CESIUM === "true"
-    || process.env.NEXT_PUBLIC_E2E_SEED === "true";
-
-  return (
-    <main style={{ position: "relative", width: "100vw", height: "100vh" }}>
-      <URLManager />
-      {disableCesium ? (
-        <div
-          className="cesium-viewer"
-          data-testid="cesium-disabled"
-          style={{ backgroundColor: "#05080d" }}
-        />
-      ) : (
-        <CesiumViewer ionToken={ionToken} />
-      )}
-      <HUD />
-    </main>
-  );
+export default function Page() {
+  return <App />;
 }

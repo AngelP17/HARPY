@@ -1,37 +1,34 @@
 {
-  "name": "web",
+  "name": "@harpy/web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "dev:offline": "NEXT_PUBLIC_STREAM_MODE=offline NEXT_PUBLIC_MAP_MODE=offline next dev",
-    "dev:hybrid": "NEXT_PUBLIC_STREAM_MODE=hybrid NEXT_PUBLIC_MAP_MODE=online NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws next dev",
-    "dev:online": "NEXT_PUBLIC_STREAM_MODE=online NEXT_PUBLIC_MAP_MODE=online NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_OSM_TILE_URL=https://tile.openstreetmap.org/ next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed",
-    "dev:demo": "NEXT_PUBLIC_STREAM_MODE=offline NEXT_PUBLIC_MAP_MODE=offline NEXT_PUBLIC_DEMO_MODE=true next dev"
+    "cesium:copy": "node scripts/copy-cesium.mjs",
+    "dev": "npm run cesium:copy && next dev",
+    "build": "npm run cesium:copy && next build",
+    "start": "npx serve out",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check:no-mocks": "node scripts/check-no-mocks.mjs"
   },
   "dependencies": {
-    "@harpy/shared-types": "*",
-    "@tanstack/react-query": "^5.90.21",
-    "cesium": "^1.138.0",
-    "clsx": "^2.1.1",
-    "lucide-react": "^0.575.0",
-    "next": "16.1.6",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
-    "zustand": "^5.0.11"
+    "@fontsource-variable/inter": "^5.3.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "cesium": "^1.146.0",
+    "next": "^16.4.2",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "satellite.js": "6.0.2",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.1",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
-    "typescript": "^5"
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.4.2",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
   }
 }

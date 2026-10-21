@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 import { useCore } from "@/lib/selectors";
 import { archiveIsFresh } from "@/lib/state";
+import { parseSelection, selectionHash } from "@/lib/deeplink";
 import { age, utc } from "@/lib/format";
 import Globe from "./Globe";
 import TopBar from "./TopBar";
@@ -58,14 +59,17 @@ export default function App() {
     return () => window.clearInterval(t);
   }, []);
 
-  // Jump to the inspector on mobile whenever something new is selected.
-  useEffect(
-    () =>
-      useApp.subscribe((s, prev) => {
-        if (s.selection && s.selection !== prev.selection) setTab("inspect");
-      }),
-    [],
-  );
+  // Deep links: restore #sat= / #eq= once, then keep the hash in sync so selections are shareable.
+  useEffect(() => {
+    const initial = parseSelection(window.location.hash);
+    if (initial) useApp.getState().select(initial);
+    return useApp.subscribe((s, prev) => {
+      if (s.selection === prev.selection) return;
+      if (s.selection) setTab("inspect"); // mobile: jump to the inspector
+      const hash = selectionHash(s.selection);
+      window.history.replaceState(null, "", hash || window.location.pathname + window.location.search);
+    });
+  }, []);
 
   if (core.status === "loading") {
     return (

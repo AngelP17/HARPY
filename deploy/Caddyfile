@@ -1,0 +1,14 @@
+# Example TLS front for a live-server deployment. Requires the caddy-ratelimit plugin for rate_limit.
+harpy.example.com {
+	encode gzip
+	@metrics path /metrics
+	respond @metrics 404
+	rate_limit {
+		zone per_ip {
+			key {remote_host}
+			events 120
+			window 1m
+		}
+	}
+	reverse_proxy 127.0.0.1:8080
+}

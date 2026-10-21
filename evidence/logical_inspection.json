@@ -1,8 +1,0 @@
-{
-  "score": 90,
-  "notes": [
-    "Call-path consistent: provider_loop -> poll_provider -> broadcast -> per-client filter -> web ingest",
-    "State transitions: provider failure -> freshness aging -> UI dimming verified",
-    "Fallback behavior: WS down => MOCK stream; never empty UI"
-  ]
-}

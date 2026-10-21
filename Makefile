@@ -1,152 +1,50 @@
-.PHONY: help dev-up dev-up-offline dev-up-online dev-demo dev-status dev-logs dev-down dev-health dev-node dev-web dev prod-local prod-ready-local docker-local-up docker-local-down confidence-gate confidence-refactor lint test build perf-check proto verify clean
+.PHONY: help test lint fmt core web web-build dev serve ingest export check clean
 
-COMPOSE ?= docker compose
-BACKEND_SERVICES ?= postgres redis minio harpy-relay harpy-ingest harpy-fusion harpy-graph harpy-aip
-OFFLINE_ENV_FILE ?= .env.offline
-ONLINE_ENV_FILE ?= .env.online
+DB ?= data/harpy.sqlite
 
 help:
-	@echo "HARPY Development Commands"
-	@echo ""
-	@echo "  make dev-up               - Start full backend stack in offline mode (default)"
-	@echo "  make dev-up-offline       - Start full backend stack with mock/offline providers"
-	@echo "  make dev-up-online        - Start full backend stack with real online providers"
-	@echo "  make dev-demo             - Start backend + launch frontend in cinematic DEMO_MODE"
-	@echo "  make dev-status           - Show compose service status"
-	@echo "  make dev-logs             - Follow backend logs"
-	@echo "  make dev-health           - Check backend health endpoints"
-	@echo "  make dev-down             - Stop local docker compose stack"
-	@echo "  make confidence-gate      - Run evidence-based refactor confidence gate"
-	@echo "  make confidence-refactor  - Alias for confidence-gate script"
-	@echo "  make prod-ready-local     - Full local production readiness gate"
-	@echo "  make lint         - Run Clippy linter"
-	@echo "  make test         - Run all tests"
-	@echo "  make build        - Build all services in release mode"
-	@echo "  make perf-check   - Check build performance"
-	@echo "  make verify       - Deterministic full-stack verification (backend + frontend)"
-	@echo "  make proto        - Generate protobuf code"
-	@echo "  make clean        - Clean build artifacts"
-
-dev-up: dev-up-offline
-
-dev-up-offline:
-	$(COMPOSE) --env-file $(OFFLINE_ENV_FILE) up -d $(BACKEND_SERVICES)
-	$(MAKE) dev-health
-	@echo "Offline backend stack is ready."
-	@echo "Frontend (offline/hybrid): cd apps/web && npm run dev:offline"
-
-dev-up-online:
-	$(COMPOSE) --env-file $(ONLINE_ENV_FILE) up -d $(BACKEND_SERVICES)
-	$(MAKE) dev-health
-	@echo "Online backend stack is ready."
-	@echo "Frontend (online): cd apps/web && npm run dev:online"
-
-
-dev-demo: dev-up-offline
-	@echo "Starting HARPY web in DEMO_MODE (dense clustered stream around current camera)..."
-	@echo "Open http://localhost:3000 once Next.js is ready."
-	@cd apps/web && npm run dev:demo
-
-dev-node:
-	cargo run -p harpy-node
-
-dev-web:
-	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm ci
-	npm --prefix packages/shared-types run build
-	NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws NEXT_PUBLIC_RELAY_HTTP_URL=http://localhost:8080 npm --prefix apps/web run dev
-
-dev:
-	./scripts/dev.sh
-
-prod-local:
-	./scripts/run_local_prod.sh
-
-prod-ready-local:
-	./scripts/local_production_readiness.sh
-
-docker-local-up:
-	docker compose -f docker-compose.local.yml up --build
-
-docker-local-down:
-	docker compose -f docker-compose.local.yml down
-
-confidence-gate:
-	./scripts/confidence_gate.sh
-
-confidence-refactor:
-	./scripts/refactor_completion_confidence_gate.sh
-
-dev-status:
-	$(COMPOSE) ps
-
-dev-logs:
-	$(COMPOSE) logs -f --tail=200 $(BACKEND_SERVICES)
-
-dev-health:
-	@echo "Checking backend health endpoints..."
-	@for url in \
-		http://localhost:8080/health \
-		http://localhost:8081/health \
-		http://localhost:8082/health \
-		http://localhost:8083/health \
-		http://localhost:8084/health ; do \
-		printf "  %s ... " "$$url"; \
-		attempt=0; \
-		until curl -fsS "$$url" > /dev/null; do \
-			attempt=$$((attempt + 1)); \
-			if [ $$attempt -ge 30 ]; then \
-				echo "failed"; \
-				exit 1; \
-			fi; \
-			sleep 2; \
-		done; \
-		echo "ok"; \
-	done
-
-dev-down:
-	$(COMPOSE) down
-
-lint:
-	@echo "Running Clippy..."
-	cargo clippy --all-targets --all-features -- -D warnings
+	@echo "HARPY"
+	@echo "  make test        Rust + web unit/integration tests (recorded real-source fixtures)"
+	@echo "  make lint        cargo fmt --check, clippy -D warnings, tsc, eslint"
+	@echo "  make ingest      One real ingestion cycle into $(DB) (needs internet)"
+	@echo "  make export      Write data/v1 documents from $(DB) into apps/web/public/data"
+	@echo "  make dev         Next dev server reading apps/web/public/data"
+	@echo "  make serve       harpy-core live server + built web on 127.0.0.1:8080"
+	@echo "  make check       Database integrity check"
 
 test:
-	@echo "Running Rust tests..."
-	cargo test --all-features
+	cargo test -p harpy-core --locked
+	npm --workspace apps/web test
 
-build:
-	@echo "Building all services in release mode..."
-	cargo build --release
+lint:
+	cargo fmt --all -- --check
+	cargo clippy -p harpy-core --all-targets --locked -- -D warnings
+	npm --workspace apps/web run typecheck
+	npm --workspace apps/web run lint
 
-perf-check:
-	@echo "Checking build performance..."
-	@echo "--- Binary sizes ---"
-	@ls -lh target/release/harpy-* 2>/dev/null | grep -v '.d' || echo "No binaries found. Run 'make build' first."
-	@echo ""
-	@echo "--- Build time (clean build) ---"
-	@echo "Cleaning..."
-	@cargo clean
-	@echo "Building..."
-	@time cargo build --release --quiet
+core:
+	cargo build --release -p harpy-core --locked
 
-proto:
-	@echo "Generating protobuf code..."
-	@cd crates/harpy-proto && cargo build
+ingest: core
+	./target/release/harpy-core ingest --db $(DB)
 
-verify:
-	@echo "Running deterministic verification pipeline..."
-	$(MAKE) lint
-	$(MAKE) test
-	$(MAKE) build
-	@echo "Building shared types..."
-	@npm --prefix packages/shared-types run build
-	@echo "Linting frontend..."
-	@npm --prefix apps/web run lint
-	@echo "Building frontend..."
-	@rm -f apps/web/.next/lock
-	@npm --prefix apps/web run build
-	@echo "Verification complete."
+export: core
+	./target/release/harpy-core export --db $(DB) --out apps/web/public
+
+check: core
+	./target/release/harpy-core check --db $(DB)
+
+dev: export
+	npm --workspace apps/web run dev
+
+web-build:
+	rm -rf apps/web/public/data # the live server renders data/v1 itself
+	NEXT_PUBLIC_BASE_PATH= npm --workspace apps/web run build
+	node apps/web/scripts/check-no-mocks.mjs apps/web/out
+
+serve: core web-build
+	./target/release/harpy-core serve --db $(DB) --bind 127.0.0.1:8080 --web apps/web/out
 
 clean:
 	cargo clean
-	$(COMPOSE) down -v
+	rm -rf apps/web/.next apps/web/out apps/web/public/cesium apps/web/public/data

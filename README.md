@@ -1,92 +1,60 @@
-# HARPY - Operator-Grade Geospatial HUD (Local-Production Ready)
+# HARPY Monitor
 
-HARPY is a working, local-production-ready geospatial operator HUD:
-- Next.js + Cesium frontend (operator HUD)
-- Single Rust node backend that streams Tracks + ProviderStatus over WebSocket
-- Deterministic mock stream by default (never an empty demo)
-- Optional real providers behind env flags (OpenSky, CelesTrak)
+A geospatial monitor that only shows real data, says where every point came from, and tells you plainly when a source is down.
 
-This repo is intentionally local-first: no Redis, no Postgres, no VPS required to run a real demo.
+**Live:** https://angelp17.github.io/HARPY/
 
----
+- **Earthquakes** from the USGS real-time feeds, every magnitude, with revision history when USGS corrects an event.
+- **Satellites** (ISS and other stations, bright satellites, GPS, weather) propagated in your browser with SGP4 from CelesTrak element sets, cross-checked against the Rust backend.
+- **Replay** of everything HARPY recorded (30 days of events, 10 days of element sets), with day/night lighting at the replay time.
+- **Provenance** on click: upstream ID, source-updated vs ingested time, revision, license, and a SHA-256 of the exact upstream record.
+- **Honest failure:** outages show as `SOURCE_UNAVAILABLE` or `STALE`. There is no mock mode, no demo stream, and no fallback data anywhere in the shipped build.
 
-## What you can demo (video parity + more)
+## Architecture
 
-- Operator HUD chrome (Data Link, Layers, Vision, Presets)
-- LIVE WebSocket streaming with RTT ping/pong
-- Provider health + freshness (FRESH/AGING/STALE/CRITICAL)
-- Vision modes (EO/NVG/FLIR) + bloom/sharpen
-- Presets (camera jumps)
-- Deterministic fallback stream (MOCK) when backend is down
-- Local-prod gates: boot checks, endpoint checks, soak test, CI enforcement
-
----
-
-## Quickstart (local dev)
-
-### 1) Run everything (one command)
-```bash
-make dev
-# Web:  http://localhost:3000
-# Node: http://localhost:8080/health
-# WS:   ws://localhost:8080/ws
+```
+USGS GeoJSON ─┐                       ┌─ data/v1/*.json ─▶ GitHub Pages (static, every 15 min)
+              ├─▶ harpy-core (Rust) ──┤
+CelesTrak OMM ┘   SQLite WAL,         └─ harpy-core serve ─▶ live server (60 s), same documents
+                  append-only revisions,
+                  provider health, SGP4
+                                         web: Next.js static export + Cesium + satellite.js
 ```
 
-### 2) Local production run
+- One data contract: `docs/contracts/observation.md`.
+- Decisions: `docs/decisions/`. What was wrong before: `docs/audit/2026-10-current-state.md`.
+- Providers and terms: `docs/providers.md`. Operations: `docs/operations/`.
+
+## Run it
 
 ```bash
-make prod-ready-local
-# Runs build + boot + readiness checks + soak
+npm ci
+make test            # Rust + web tests against recorded real-source fixtures
+make ingest          # pull real data into data/harpy.sqlite
+make dev             # http://localhost:3000
+# or
+make serve           # harpy-core live server + web at http://127.0.0.1:8080
 ```
 
----
+Requires Rust stable and Node 22.
 
-## Runtime endpoints
+## Verification
 
-- `GET /health` - node health
-- `GET /metrics` - prometheus metrics (local-prod)
-- `GET /ws` - WebSocket stream
+| Claim | Evidence |
+|---|---|
+| SGP4 is correct | Vallado verification vectors match to < 1 cm (`orbit.rs`) |
+| Browser and backend agree | Rust golden positions reproduced by satellite.js within ~5 m (`orbit.test.ts`) |
+| Revisions preserve history | Integration test: USGS corrects a magnitude, revision 1 and its raw record survive |
+| Outages are honest | Integration test: two failed fetches make the provider `UNAVAILABLE`; nothing is synthesized |
+| HTTP 200 garbage is a failure | Integration test |
+| Restart and backup are safe | Integration tests: reopen identical; `VACUUM INTO` backup passes integrity check |
+| No mocks ship | `check-no-mocks.mjs` scans the production bundle in CI |
+| Live data works today | `monitor.yml` live acceptance table on every run |
 
----
+## Roadmap
 
-## Environment flags (real providers)
+Milestone B (HARPY 1.0): GeoWraith visual geolocation as an `inferred` source, saved investigations, and reproducible reports. Blocked on model assets and an Im2GPS3k benchmark with owner-set thresholds; see `docs/decisions/0002-geowraith-accuracy-gate.md`.
 
-By default, HARPY runs deterministic mocks.
+## Credits
 
-Enable real providers if you want:
-
-```bash
-export ENABLE_REAL_ADSB=true
-export OPENSKY_CLIENT_ID=...
-export OPENSKY_CLIENT_SECRET=...
-
-export ENABLE_REAL_TLE=true
-export CELESTRAK_GROUP=STATIONS
-```
-
-If auth is missing or providers fail, HARPY falls back to mock automatically.
-
----
-
-## Repo structure (what matters)
-
-- `apps/web/` - operator HUD (Next.js + Cesium)
-- `services/harpy-node/` - single Rust node (WS + providers)
-- `scripts/` - readiness gates and confidence checks
-- `evidence/` - refactor completion confidence inputs (checked-in)
-
----
-
-## Production readiness (local)
-
-Production-ready locally means:
-
-- deterministic demo never breaks
-- health/metrics exist
-- contract tests exist
-- CI enforces all gates
-- docs match reality
-
-See:
-- `scripts/local_production_readiness.sh`
-- `scripts/refactor_completion_confidence_gate.sh`
+Earthquake data: U.S. Geological Survey. Orbital elements: CelesTrak. Imagery: Natural Earth. Globe: CesiumJS. SGP4: `sgp4` crate, satellite.js.

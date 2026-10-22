@@ -135,12 +135,40 @@ jobs:
           git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" harpy-data
           echo "saved $(du -h /tmp/harpy.sqlite.zst | cut -f1) compressed"
 
+      # Publishing needs Pages switched on (Settings > Pages > Source: GitHub Actions). If it is not,
+      # ingest and the database save above have already succeeded, so skip publishing with a warning
+      # instead of failing the run and emailing the owner every 15 minutes.
+      - name: Check GitHub Pages is enabled
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Only a 404 means "Pages not enabled". Any other failure (auth, rate limit, network) fails the step.
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>&1); then
+            type="$out"
+          elif echo "$out" | grep -q "HTTP 404"; then
+            type=none
+          else
+            echo "::error::Could not query the Pages configuration: $out"
+            exit 1
+          fi
+          echo "build_type=$type"
+          if [ "$type" = "workflow" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Site not published::GitHub Pages build type is '$type'. Set Settings > Pages > Source to 'GitHub Actions'. Data was ingested and saved; only publishing was skipped."
+          fi
+
       - uses: actions/configure-pages@v5
+        if: steps.pages.outputs.enabled == 'true'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outputs.enabled == 'true'
         with:
           path: site
       - name: Deploy to GitHub Pages
         id: deploy
+        if: steps.pages.outputs.enabled == 'true'
         uses: actions/deploy-pages@v4
 
       - name: Report
@@ -151,6 +179,9 @@ jobs:
             echo '```json'
             cat ingest.json 2>/dev/null || echo "no ingest output"
             echo '```'
+            if [ "${{ steps.pages.outputs.enabled }}" != "true" ]; then
+              echo "> **Site not published.** GitHub Pages is not set to the GitHub Actions source. Data was ingested and saved."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.acceptance.outcome }}" = "failure" ]; then
             echo "::error::Live acceptance failed. The honest state was still published."

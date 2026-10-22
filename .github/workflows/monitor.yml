@@ -143,7 +143,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          type=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>/dev/null || echo none)
+          # Only a 404 means "Pages not enabled". Any other failure (auth, rate limit, network) fails the step.
+          if out=$(gh api "repos/${GITHUB_REPOSITORY}/pages" --jq .build_type 2>&1); then
+            type="$out"
+          elif echo "$out" | grep -q "HTTP 404"; then
+            type=none
+          else
+            echo "::error::Could not query the Pages configuration: $out"
+            exit 1
+          fi
           echo "build_type=$type"
           if [ "$type" = "workflow" ]; then
             echo "enabled=true" >> "$GITHUB_OUTPUT"
